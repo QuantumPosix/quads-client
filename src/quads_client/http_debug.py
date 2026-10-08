@@ -9,9 +9,12 @@ or response bodies are masked.
 
 import json
 import sys
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 MAX_BODY = 2000
-_REDACT_KEYS = {"password", "token", "auth_token", "api_token"}
+# Substring match on lowercased key names: password, *token*, *secret*,
+# api_key/apikey, and the authorization header value.
+_REDACT_MARKERS = ("password", "token", "secret", "apikey", "api_key", "authorization")
 
 
 def _disabled():
@@ -29,10 +32,26 @@ def configure(is_enabled):
 
 def _redact(value):
     if isinstance(value, dict):
-        return {k: ("***" if k.lower() in _REDACT_KEYS else _redact(v)) for k, v in value.items()}
+        return {
+            k: ("***" if any(marker in k.lower() for marker in _REDACT_MARKERS) else _redact(v))
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [_redact(item) for item in value]
     return value
+
+
+def _redact_url(raw):
+    """Drop userinfo and mask credential-looking query parameters."""
+    parts = urlsplit(raw)
+    netloc = parts.netloc.rpartition("@")[2]
+    query = urlencode(
+        [
+            ((name, "***") if any(marker in name.lower() for marker in _REDACT_MARKERS) else (name, value))
+            for name, value in parse_qsl(parts.query, keep_blank_values=True)
+        ]
+    )
+    return urlunsplit((parts.scheme, netloc, parts.path, query, parts.fragment))
 
 
 def _format_body(raw):
@@ -57,7 +76,7 @@ def _response_hook(response, *args, **kwargs):
     if not _is_enabled():
         return response
     request = response.request
-    _emit(f"[debug] >> {request.method} {request.url}")
+    _emit(f"[debug] >> {request.method} {_redact_url(request.url)}")
     body = _format_body(request.body)
     if body:
         _emit(f"[debug] >> {body}")

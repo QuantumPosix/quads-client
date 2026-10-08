@@ -480,10 +480,13 @@ Example output:
 ```
 [debug] >> POST https://quads.example.com/api/v3/assignments/self
 [debug] >> {"description": "ci", "owner": "jdoe", "wipe": true}
-[debug] << 403 {"message": "forbidden"}
+[debug] << 403 {"error": "Forbidden", "message": "forbidden"}
 ```
 
-Secrets are never logged: the `Authorization` header is omitted, and `password`/`token` fields in request or response bodies are masked.
+Secrets are never logged: the `Authorization` header is omitted, request and
+response body fields whose name contains `password`, `token`, `secret`,
+`api_key`, or `authorization` are masked, and any userinfo or credential
+query parameters are stripped from traced URLs.
 
 ## How to Self-Schedule
 

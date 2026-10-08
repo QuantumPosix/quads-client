@@ -590,6 +590,21 @@ def test_response_error_missing_required_key():
     assert result == "unexpected response from server (missing: cloud)"
 
 
+def test_response_error_status_code_string():
+    """Numeric string status codes are treated like ints"""
+    assert response_error({"status_code": "401"}) == "HTTP 401"
+
+
+def test_response_error_message_only():
+    """A bare message body with no markers is never a success payload"""
+    assert response_error({"message": "forbidden"}) == "forbidden"
+
+
+def test_response_error_message_only_with_required_key():
+    """With a required key, a bare message body is still reported as missing"""
+    assert response_error({"message": "forbidden"}, "id") == ("unexpected response from server (missing: id)")
+
+
 def test_response_error_valid():
     """A valid dict with all required keys returns None"""
     assert response_error({"id": 42, "cloud": {"name": "cloud17"}}, "id", "cloud") is None

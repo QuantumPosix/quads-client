@@ -104,17 +104,37 @@ class QuadsClientShell(cmd2.Cmd):
         self._update_prompt()
         return stop
 
+    def cmd_func(self, command):
+        """cmd2 2.x/3.x dispatch hook: resolve hyphenated command names.
+
+        cmd2 < 4 dispatches through ``cmd_func()``; cmd2 4.x uses
+        ``get_command_func()`` south of the same contract, so both hooks
+        get the same hyphen-to-underscore translation. Only the command
+        token is translated so args such as a hostname like perf-lab are
+        left untouched.
+        """
+        parent = getattr(super(), "cmd_func", None)
+        if parent is None:
+            return None
+        func = parent(command)
+        if func is None and "-" in command:
+            func = parent(command.replace("-", "_"))
+        return func
+
     def get_command_func(self, command):
-        """Resolve hyphenated command names to the underscore do_* method.
+        """cmd2 4.x dispatch hook: resolve hyphenated command names.
 
         Commands are defined as do_<name_with_underscores> but the UX uses hyphens
         (e.g. edit-server). Only the command token is translated so args such as a
         hostname like perf-lab are left untouched. Resolving here keeps cmd2's normal
         dispatch intact so hyphenated commands are recorded in history like any other.
         """
-        func = super().get_command_func(command)
+        parent = getattr(super(), "get_command_func", None)
+        if parent is None:
+            return None
+        func = parent(command)
         if func is None and "-" in command:
-            func = super().get_command_func(command.replace("-", "_"))
+            func = parent(command.replace("-", "_"))
         return func
 
     def _get_activity_indicator(self):

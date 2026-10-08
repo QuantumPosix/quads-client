@@ -742,7 +742,7 @@ class UserCommands:
                 self.shell, self.shell.connection.api.create_self_assignment, assignment_data
             )
 
-            assignment_error = response_error(assignment, "id", "cloud")
+            assignment_error = response_error(assignment, "id")
             if assignment_error:
                 self.shell.perror(f"Self-assignment failed: {assignment_error}")
                 lowered = assignment_error.lower()
