@@ -1,3 +1,4 @@
+import cmd2
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from quads_client.shell import QuadsClientShell
@@ -288,3 +289,41 @@ def test_hyphenated_command_recorded_in_history():
             shell.onecmd("edit-server perf-lab verify false")
 
             assert any("edit-server" == str(item.statement.command) for item in shell.history)
+
+
+def test_cmd_func_resolves_hyphens_via_parent():
+    """cmd2 3.x path: cmd_func falls back to underscores via the parent hook"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+
+            def target(*a, **k):
+                return None
+
+            shell.server_commands.cmd_edit_server = target
+
+            def fake_parent(self, command):
+                return None if command == "edit-server" else getattr(self.server_commands, "cmd_" + command, None)
+
+            with patch.object(cmd2.Cmd, "cmd_func", fake_parent, create=True):
+                func = shell.cmd_func("edit-server")
+
+            assert func == target
+
+
+def test_cmd_func_no_parent_returns_none():
+    """cmd2 4.x: without a cmd_func parent the 3.x hook is inert"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            with patch.object(cmd2.Cmd, "cmd_func", None, create=True):
+                assert shell.cmd_func("edit-server") is None
+
+
+def test_get_command_func_no_parent_returns_none():
+    """cmd2 3.x: without a get_command_func parent the 4.x hook is inert"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            with patch.object(cmd2.Cmd, "get_command_func", None, create=True):
+                assert shell.get_command_func("edit-server") is None
