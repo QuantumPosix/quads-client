@@ -242,8 +242,8 @@ def test_shell_exit_command():
             assert result is True
 
 
-def test_default_dispatches_hyphenated_command():
-    """Hyphenated command names dispatch to the underscore do_* method, args untouched"""
+def test_hyphenated_command_dispatches():
+    """Hyphenated command names resolve to the underscore do_* method, args untouched"""
     with patch("quads_client.shell.QuadsClientConfig"):
         with patch("quads_client.shell.SessionManager"):
             shell = QuadsClientShell(quiet=True)
@@ -256,7 +256,7 @@ def test_default_dispatches_hyphenated_command():
             assert str(passed_args).split() == ["perf-lab", "verify", "false"]
 
 
-def test_default_unknown_hyphenated_command_errors():
+def test_unknown_hyphenated_command_errors():
     """Unknown hyphenated command with no underscore counterpart still errors"""
     with patch("quads_client.shell.QuadsClientConfig"):
         with patch("quads_client.shell.SessionManager"):
@@ -267,3 +267,15 @@ def test_default_unknown_hyphenated_command_errors():
 
             shell.perror.assert_called_once()
             assert "not a recognized command" in str(shell.perror.call_args)
+
+
+def test_hyphenated_command_recorded_in_history():
+    """Hyphenated commands are recorded in history like their underscore form"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            shell.server_commands.cmd_edit_server = lambda *a, **k: None
+
+            shell.onecmd("edit-server perf-lab verify false")
+
+            assert any("edit-server" == str(item.statement.command) for item in shell.history)
