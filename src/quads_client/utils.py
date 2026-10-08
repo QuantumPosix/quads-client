@@ -77,6 +77,31 @@ def extract_assignment_id(assignment, default="N/A"):
     return getattr(assignment, "id", default)
 
 
+def response_error(response, *required_keys):
+    """Return a human-readable error string if `response` is not a successful API
+    payload, else None.
+
+    QUADS error bodies look like {"status_code": 4xx, "error": "...", "message": "..."}.
+    The lib returns those as plain dicts for statuses it does not raise on (401/403),
+    so callers must check before trusting the result.
+    """
+    if not isinstance(response, dict):
+        return "no response from server"
+    status = response.get("status_code")
+    if isinstance(status, str) and status.isdigit():
+        status = int(status)
+    if response.get("error") or (isinstance(status, int) and status >= 400):
+        return response.get("message") or response.get("error") or f"HTTP {status}"
+    if not required_keys and "message" in response and len(response) == 1:
+        # Some proxies return a bare message with no status marker; that is
+        # never a success payload (successes carry identifiers).
+        return response["message"]
+    missing = [key for key in required_keys if key not in response]
+    if missing:
+        return "unexpected response from server (missing: %s)" % ", ".join(missing)
+    return None
+
+
 def extract_host_field(host, field_name, field_aliases=None, default=""):
     """
     Extract a field from a host that could be a string, dict, or object.

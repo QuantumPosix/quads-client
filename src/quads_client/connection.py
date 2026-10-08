@@ -3,6 +3,7 @@ import sys
 import jwt
 import urllib3
 from quads_lib import QuadsApi
+from quads_client import http_debug
 from quads_client.config import QuadsClientConfig
 
 
@@ -214,6 +215,9 @@ class ConnectionManager:
                 # Try to decode role from token
                 self._user_role = self._decode_role_from_token()
 
+            # Attach HTTP debug tracing to the live session (no-op unless debug is on)
+            http_debug.install(self._api.session)
+
         except Exception as e:
             # Provide user-friendly error messages
             error_str = str(e).lower()
@@ -227,7 +231,7 @@ class ConnectionManager:
             elif "ssl" in error_str or "certificate" in error_str:
                 raise ConnectionError(
                     f"Failed to connect to {server_name}: SSL certificate verification failed. "
-                    f"Use 'edit-server {server_name} --verify false' to disable verification for testing."
+                    f"Use 'edit-server {server_name} verify false' to disable verification for testing."
                 )
             elif "unauthorized" in error_str or "401" in error_str or "403" in error_str or "forbidden" in error_str:
                 raise ConnectionError(

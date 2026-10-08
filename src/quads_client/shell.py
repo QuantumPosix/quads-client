@@ -2,6 +2,7 @@ import time
 
 import cmd2
 
+from quads_client.cmd2_compat import bind_session_switch
 from quads_client.commands.available import AvailableCommands
 from quads_client.commands.cloud import CloudCommands
 from quads_client.commands.connection import ConnectionCommands
@@ -13,6 +14,7 @@ from quads_client.commands.session import SessionCommands
 from quads_client.commands.track import TrackCommands
 from quads_client.commands.user import UserCommands
 from quads_client.commands.version import VersionCommands
+from quads_client import http_debug
 from quads_client.config import ConfigError, QuadsClientConfig
 from quads_client.history import CommandHistory
 from quads_client.rich_console import RichConsole
@@ -29,6 +31,8 @@ class QuadsClientShell(cmd2.Cmd):
             persistent_history_file="~/.config/quads/.quads-client_readline_history",
             persistent_history_length=1000,
         )
+        # Route HTTP debug tracing through the shell's live debug flag
+        http_debug.configure(lambda: self.debug)
         self.config = None
         self.session_manager = None
         self.command_history = CommandHistory()
@@ -92,18 +96,46 @@ class QuadsClientShell(cmd2.Cmd):
         return None
 
     def preloop(self):
-        """Configure custom readline keybindings"""
+        """Configure custom keybindings (cmd2 2.x-4.x compatible)"""
         super().preloop()
-        try:
-            import readline
-
-            readline.parse_and_bind('"\\C-a\\C-a": "session_switch\\n"')
-        except (ImportError, OSError):
-            pass
+        bind_session_switch(self)
 
     def postcmd(self, stop, line):
         self._update_prompt()
         return stop
+
+    def cmd_func(self, command):
+        """cmd2 2.x/3.x dispatch hook: resolve hyphenated command names.
+
+        cmd2 < 4 dispatches through ``cmd_func()``; cmd2 4.x uses
+        ``get_command_func()`` south of the same contract, so both hooks
+        get the same hyphen-to-underscore translation. Only the command
+        token is translated so args such as a hostname like perf-lab are
+        left untouched.
+        """
+        parent = getattr(super(), "cmd_func", None)
+        if parent is None:
+            return None
+        func = parent(command)
+        if func is None and "-" in command:
+            func = parent(command.replace("-", "_"))
+        return func
+
+    def get_command_func(self, command):
+        """cmd2 4.x dispatch hook: resolve hyphenated command names.
+
+        Commands are defined as do_<name_with_underscores> but the UX uses hyphens
+        (e.g. edit-server). Only the command token is translated so args such as a
+        hostname like perf-lab are left untouched. Resolving here keeps cmd2's normal
+        dispatch intact so hyphenated commands are recorded in history like any other.
+        """
+        parent = getattr(super(), "get_command_func", None)
+        if parent is None:
+            return None
+        func = parent(command)
+        if func is None and "-" in command:
+            func = parent(command.replace("-", "_"))
+        return func
 
     def _get_activity_indicator(self):
         if not self.connection or not self.connection.is_authenticated:

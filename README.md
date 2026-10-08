@@ -44,6 +44,7 @@ QUADS Client provides both a powerful CLI and an intuitive GUI for managing mult
   - [GUI Mode](#gui-mode)
   - [Interactive Mode](#interactive-mode)
   - [One-Shot Commands](#one-shot-commands)
+  - [Debug / Verbose Mode](#debug--verbose-mode)
 - [Commands](#commands)
   - [Tab Completion](#tab-completion)
   - [Connection Management](#connection-management)
@@ -449,6 +450,43 @@ EOF
 - Use `> /dev/null 2>&1` to suppress all output in scripts
 - Commands use underscores (e.g., `cloud_list`, `my_hosts`)
 - All table output goes to stdout for easy parsing
+
+### Debug / Verbose Mode
+
+By default the client hides the underlying HTTP calls to the QUADS API, which can make some failures hard to diagnose. Debug mode traces every API request and response to stderr so you can see exactly what went over the wire: the request method and URL, the response status code, and the (truncated) response body.
+
+Enable it in interactive mode:
+
+```bash
+set debug true
+```
+
+Or use the global `--debug`/`-d` flag for one-shot and piped runs, where `set` is awkward:
+
+```bash
+quads-client --debug my_assignments
+quads-client -d schedule 1 description "debugging"
+echo 'cloud_list' | quads-client --debug
+```
+
+Trace lines are prefixed and written to stderr, so normal stdout stays clean and parseable. Redirect stderr to capture a trace to a file:
+
+```bash
+quads-client --debug my_assignments 2> trace.log
+```
+
+Example output:
+
+```
+[debug] >> POST https://quads.example.com/api/v3/assignments/self
+[debug] >> {"description": "ci", "owner": "jdoe", "wipe": true}
+[debug] << 403 {"error": "Forbidden", "message": "forbidden"}
+```
+
+Secrets are never logged: the `Authorization` header is omitted, request and
+response body fields whose name contains `password`, `token`, `secret`,
+`api_key`, or `authorization` are masked, and any userinfo or credential
+query parameters are stripped from traced URLs.
 
 ## How to Self-Schedule
 

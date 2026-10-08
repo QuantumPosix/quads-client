@@ -13,7 +13,7 @@ authors = [
     {name = "Will Foster", email = "wfoster@redhat.com"}
 ]
 dependencies = [
-    "cmd2>=2.0.0",
+    "cmd2>=3.0.0",
     "quads-lib>=0.1.9",
     "PyYAML>=6.0.0",
     "argcomplete>=3.1.2",

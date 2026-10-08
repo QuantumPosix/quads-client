@@ -1,3 +1,4 @@
+import cmd2
 import pytest
 from unittest.mock import MagicMock, patch, PropertyMock
 from quads_client.shell import QuadsClientShell
@@ -215,13 +216,22 @@ def test_prompt_uses_raw_ansi_codes():
 
 
 def test_shell_preloop_binds_readline():
-    """Test preloop sets up Ctrl+A Ctrl+A keybinding"""
+    """Test preloop sets up Ctrl+A Ctrl+A keybinding (per cmd2 major)"""
+    from quads_client.cmd2_compat import CMD2_MAJOR
+
     with patch("quads_client.shell.QuadsClientConfig"):
         with patch("quads_client.shell.SessionManager"):
             shell = QuadsClientShell()
-            with patch("readline.parse_and_bind") as mock_bind:
+            if CMD2_MAJOR < 4:
+                with patch("readline.parse_and_bind") as mock_bind:
+                    shell.preloop()
+                    mock_bind.assert_called_once_with('"\\C-a\\C-a": "session_switch\\n"')
+            else:
                 shell.preloop()
-                mock_bind.assert_called_once_with('"\\C-a\\C-a": "session_switch\\n"')
+                from prompt_toolkit.keys import Keys
+
+                bindings = shell.main_session.key_bindings.get_bindings_for_keys((Keys.ControlA, Keys.ControlA))
+                assert bindings
 
 
 def test_shell_preloop_handles_no_readline():
@@ -240,3 +250,80 @@ def test_shell_exit_command():
             shell = QuadsClientShell()
             result = shell.do_exit("")
             assert result is True
+
+
+def test_hyphenated_command_dispatches():
+    """Hyphenated command names resolve to the underscore do_* method, args untouched"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            shell.server_commands.cmd_edit_server = MagicMock()
+
+            shell.onecmd("edit-server perf-lab verify false")
+
+            shell.server_commands.cmd_edit_server.assert_called_once()
+            passed_args = shell.server_commands.cmd_edit_server.call_args[0][0]
+            assert str(passed_args).split() == ["perf-lab", "verify", "false"]
+
+
+def test_unknown_hyphenated_command_errors():
+    """Unknown hyphenated command with no underscore counterpart still errors"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            shell.perror = MagicMock()
+
+            shell.onecmd("bogus-command foo")
+
+            shell.perror.assert_called_once()
+            assert "not a recognized command" in str(shell.perror.call_args)
+
+
+def test_hyphenated_command_recorded_in_history():
+    """Hyphenated commands are recorded in history like their underscore form"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            shell.server_commands.cmd_edit_server = lambda *a, **k: None
+
+            shell.onecmd("edit-server perf-lab verify false")
+
+            assert any("edit-server" == str(item.statement.command) for item in shell.history)
+
+
+def test_cmd_func_resolves_hyphens_via_parent():
+    """cmd2 3.x path: cmd_func falls back to underscores via the parent hook"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+
+            def target(*a, **k):
+                return None
+
+            shell.server_commands.cmd_edit_server = target
+
+            def fake_parent(self, command):
+                return None if command == "edit-server" else getattr(self.server_commands, "cmd_" + command, None)
+
+            with patch.object(cmd2.Cmd, "cmd_func", fake_parent, create=True):
+                func = shell.cmd_func("edit-server")
+
+            assert func == target
+
+
+def test_cmd_func_no_parent_returns_none():
+    """cmd2 4.x: without a cmd_func parent the 3.x hook is inert"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            with patch.object(cmd2.Cmd, "cmd_func", None, create=True):
+                assert shell.cmd_func("edit-server") is None
+
+
+def test_get_command_func_no_parent_returns_none():
+    """cmd2 3.x: without a get_command_func parent the 4.x hook is inert"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            with patch.object(cmd2.Cmd, "get_command_func", None, create=True):
+                assert shell.get_command_func("edit-server") is None
