@@ -2,6 +2,7 @@ import time
 
 import cmd2
 
+from quads_client.cmd2_compat import bind_session_switch
 from quads_client.commands.available import AvailableCommands
 from quads_client.commands.cloud import CloudCommands
 from quads_client.commands.connection import ConnectionCommands
@@ -92,14 +93,9 @@ class QuadsClientShell(cmd2.Cmd):
         return None
 
     def preloop(self):
-        """Configure custom readline keybindings"""
+        """Configure custom keybindings (cmd2 2.x-4.x compatible)"""
         super().preloop()
-        try:
-            import readline
-
-            readline.parse_and_bind('"\\C-a\\C-a": "session_switch\\n"')
-        except (ImportError, OSError):
-            pass
+        bind_session_switch(self)
 
     def postcmd(self, stop, line):
         self._update_prompt()

@@ -215,13 +215,22 @@ def test_prompt_uses_raw_ansi_codes():
 
 
 def test_shell_preloop_binds_readline():
-    """Test preloop sets up Ctrl+A Ctrl+A keybinding"""
+    """Test preloop sets up Ctrl+A Ctrl+A keybinding (per cmd2 major)"""
+    from quads_client.cmd2_compat import CMD2_MAJOR
+
     with patch("quads_client.shell.QuadsClientConfig"):
         with patch("quads_client.shell.SessionManager"):
             shell = QuadsClientShell()
-            with patch("readline.parse_and_bind") as mock_bind:
+            if CMD2_MAJOR < 4:
+                with patch("readline.parse_and_bind") as mock_bind:
+                    shell.preloop()
+                    mock_bind.assert_called_once_with('"\\C-a\\C-a": "session_switch\\n"')
+            else:
                 shell.preloop()
-                mock_bind.assert_called_once_with('"\\C-a\\C-a": "session_switch\\n"')
+                from prompt_toolkit.keys import Keys
+
+                bindings = shell.main_session.key_bindings.get_bindings_for_keys((Keys.ControlA, Keys.ControlA))
+                assert bindings
 
 
 def test_shell_preloop_handles_no_readline():
