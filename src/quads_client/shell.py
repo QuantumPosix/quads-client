@@ -108,6 +108,19 @@ class QuadsClientShell(cmd2.Cmd):
         self._update_prompt()
         return stop
 
+    def get_command_func(self, command):
+        """Resolve hyphenated command names to the underscore do_* method.
+
+        Commands are defined as do_<name_with_underscores> but the UX uses hyphens
+        (e.g. edit-server). Only the command token is translated so args such as a
+        hostname like perf-lab are left untouched. Resolving here keeps cmd2's normal
+        dispatch intact so hyphenated commands are recorded in history like any other.
+        """
+        func = super().get_command_func(command)
+        if func is None and "-" in command:
+            func = super().get_command_func(command.replace("-", "_"))
+        return func
+
     def _get_activity_indicator(self):
         if not self.connection or not self.connection.is_authenticated:
             return ""
