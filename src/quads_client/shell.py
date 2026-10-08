@@ -105,6 +105,20 @@ class QuadsClientShell(cmd2.Cmd):
         self._update_prompt()
         return stop
 
+    def default(self, statement):
+        """Dispatch hyphenated command names to the underscore do_* method.
+
+        Commands are defined as do_<name_with_underscores> but the UX uses hyphens
+        (e.g. edit-server). Only the command token is translated so args such as a
+        hostname like perf-lab are left untouched.
+        """
+        command = statement.command
+        if "-" in command:
+            func = getattr(self, "do_" + command.replace("-", "_"), None)
+            if callable(func):
+                return func(statement)
+        return super().default(statement)
+
     def _get_activity_indicator(self):
         if not self.connection or not self.connection.is_authenticated:
             return ""

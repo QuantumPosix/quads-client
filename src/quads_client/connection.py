@@ -227,7 +227,7 @@ class ConnectionManager:
             elif "ssl" in error_str or "certificate" in error_str:
                 raise ConnectionError(
                     f"Failed to connect to {server_name}: SSL certificate verification failed. "
-                    f"Use 'edit-server {server_name} --verify false' to disable verification for testing."
+                    f"Use 'edit-server {server_name} verify false' to disable verification for testing."
                 )
             elif "unauthorized" in error_str or "401" in error_str or "403" in error_str or "forbidden" in error_str:
                 raise ConnectionError(

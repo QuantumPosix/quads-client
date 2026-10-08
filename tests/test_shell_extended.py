@@ -240,3 +240,30 @@ def test_shell_exit_command():
             shell = QuadsClientShell()
             result = shell.do_exit("")
             assert result is True
+
+
+def test_default_dispatches_hyphenated_command():
+    """Hyphenated command names dispatch to the underscore do_* method, args untouched"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            shell.server_commands.cmd_edit_server = MagicMock()
+
+            shell.onecmd("edit-server perf-lab verify false")
+
+            shell.server_commands.cmd_edit_server.assert_called_once()
+            passed_args = shell.server_commands.cmd_edit_server.call_args[0][0]
+            assert str(passed_args).split() == ["perf-lab", "verify", "false"]
+
+
+def test_default_unknown_hyphenated_command_errors():
+    """Unknown hyphenated command with no underscore counterpart still errors"""
+    with patch("quads_client.shell.QuadsClientConfig"):
+        with patch("quads_client.shell.SessionManager"):
+            shell = QuadsClientShell(quiet=True)
+            shell.perror = MagicMock()
+
+            shell.onecmd("bogus-command foo")
+
+            shell.perror.assert_called_once()
+            assert "not a recognized command" in str(shell.perror.call_args)
