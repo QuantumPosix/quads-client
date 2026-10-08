@@ -492,3 +492,58 @@ class TestPipedStdin:
 
                 MockShell.assert_called_once_with(quiet=False)
                 mock_instance.cmdloop.assert_called_once()
+
+
+class TestDebugFlag:
+    """Tests for the global --debug/-d flag"""
+
+    def test_debug_flag_sets_shell_debug_and_strips_flag(self):
+        """--debug enables tracing and is removed from the command"""
+        with patch("sys.argv", ["quads-client", "--debug", "version"]):
+            from quads_client.cli import main
+
+            with patch("quads_client.cli.main.QuadsClientShell") as MockShell:
+                inst = MagicMock()
+                inst.execute_oneshot_command.return_value = 0
+                MockShell.return_value = inst
+
+                with pytest.raises(SystemExit) as exc_info:
+                    main()
+
+                MockShell.assert_called_once_with(quiet=True)
+                assert inst.debug is True
+                inst.execute_oneshot_command.assert_called_once_with("version")
+                assert exc_info.value.code == 0
+
+    def test_short_debug_flag(self):
+        """-d is an alias for --debug and is stripped from the command"""
+        with patch("sys.argv", ["quads-client", "-d", "cloud_list"]):
+            from quads_client.cli import main
+
+            with patch("quads_client.cli.main.QuadsClientShell") as MockShell:
+                inst = MagicMock()
+                inst.execute_oneshot_command.return_value = 0
+                MockShell.return_value = inst
+
+                with pytest.raises(SystemExit):
+                    main()
+
+                assert inst.debug is True
+                inst.execute_oneshot_command.assert_called_once_with("cloud_list")
+
+    def test_no_debug_flag_leaves_default(self):
+        """Without the flag the shell debug state is never forced on"""
+        with patch("sys.argv", ["quads-client", "version"]):
+            from quads_client.cli import main
+
+            with patch("quads_client.cli.main.QuadsClientShell") as MockShell:
+                inst = MagicMock()
+                inst.debug = False
+                inst.execute_oneshot_command.return_value = 0
+                MockShell.return_value = inst
+
+                with pytest.raises(SystemExit):
+                    main()
+
+                assert inst.debug is False
+                inst.execute_oneshot_command.assert_called_once_with("version")
