@@ -11,6 +11,7 @@ from quads_client.utils import (
     extract_hostname,
     get_username_short,
     resolve_os,
+    response_error,
 )
 
 
@@ -741,6 +742,17 @@ class UserCommands:
                 self.shell, self.shell.connection.api.create_self_assignment, assignment_data
             )
 
+            assignment_error = response_error(assignment, "id", "cloud")
+            if assignment_error:
+                self.shell.perror(f"Self-assignment failed: {assignment_error}")
+                lowered = assignment_error.lower()
+                if any(w in lowered for w in ("token", "unauthorized", "credential", "permission", "forbidden")):
+                    self.shell.perror(
+                        "Hint: your API token may be invalid or expired. "
+                        "Update it with 'edit_server <server> token <TOKEN>', or re-run 'login'."
+                    )
+                return
+
             # Extract cloud name from response
             cloud_name = extract_cloud_name(assignment, default="unknown")
             assignment_id = extract_assignment_id(assignment, default="unknown")
@@ -757,7 +769,10 @@ class UserCommands:
                     result = auto_refresh_on_auth_error(
                         self.shell, self.shell.connection.api.create_schedule, schedule_data
                     )
-                    if result:
+                    schedule_err = response_error(result)
+                    if schedule_err:
+                        self.shell.pwarning(f"  Warning: could not schedule {hostname}: {schedule_err}")
+                    else:
                         created_schedules += 1
                 except Exception as schedule_error:
                     self.shell.pwarning(f"  Warning: Failed to schedule {hostname}: {schedule_error}")

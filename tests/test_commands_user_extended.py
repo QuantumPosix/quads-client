@@ -195,6 +195,74 @@ def test_schedule_schedule_creation_failure(mock_shell):
     assert mock_shell.pwarning.call_count >= 1 or mock_shell.perror.call_count >= 1
 
 
+def test_schedule_self_assignment_rejected_token(mock_shell):
+    """Server rejecting the self-assignment (401) must not report a false success"""
+    mock_shell.connection.is_connected = True
+    mock_shell.connection.is_authenticated = True
+    mock_shell.connection.is_admin = False
+    mock_shell.connection.username = "user@example.com"
+    mock_shell.connection.api.create_self_assignment.return_value = {
+        "status_code": 401,
+        "error": "Unauthorized",
+        "message": "Invalid API token!",
+    }
+
+    user_cmd = UserCommands(mock_shell)
+    user_cmd.cmd_schedule('host01.example.com description "Test"')
+
+    error_calls = [str(call) for call in mock_shell.perror.call_args_list]
+    assert any("Self-assignment failed: Invalid API token!" in call for call in error_calls)
+    # Must return early: no schedule attempted, no false "Reserved"
+    mock_shell.connection.api.create_schedule.assert_not_called()
+    output = " ".join(str(call) for call in mock_shell.poutput.call_args_list)
+    assert "Reserved" not in output
+
+
+def test_schedule_create_schedule_error_dict(mock_shell):
+    """create_schedule returning an error dict must not count as a scheduled host"""
+    mock_shell.connection.is_connected = True
+    mock_shell.connection.is_authenticated = True
+    mock_shell.connection.is_admin = False
+    mock_shell.connection.username = "user@example.com"
+    mock_shell.connection.api.create_self_assignment.return_value = {
+        "id": 123,
+        "cloud": {"name": "cloud02"},
+    }
+    mock_shell.connection.api.create_schedule.return_value = {
+        "status_code": 401,
+        "error": "Unauthorized",
+        "message": "Invalid API token!",
+    }
+
+    user_cmd = UserCommands(mock_shell)
+    user_cmd.cmd_schedule('host01.example.com description "Test"')
+
+    error_calls = [str(call) for call in mock_shell.perror.call_args_list]
+    assert any("Failed to schedule any hosts" in call for call in error_calls)
+    output = " ".join(str(call) for call in mock_shell.poutput.call_args_list)
+    assert "Reserved" not in output
+
+
+def test_schedule_happy_path_reports_reserved(mock_shell):
+    """Valid assignment and schedule responses still report success"""
+    mock_shell.connection.is_connected = True
+    mock_shell.connection.is_authenticated = True
+    mock_shell.connection.is_admin = False
+    mock_shell.connection.username = "user@example.com"
+    mock_shell.connection.api.create_self_assignment.return_value = {
+        "id": 123,
+        "cloud": {"name": "cloud02"},
+    }
+    mock_shell.connection.api.create_schedule.return_value = {"id": 1}
+
+    user_cmd = UserCommands(mock_shell)
+    user_cmd.cmd_schedule('host01.example.com description "Test"')
+
+    output = " ".join(str(call) for call in mock_shell.poutput.call_args_list)
+    assert "Reserved 1 host(s)" in output
+    assert "cloud02" in output
+
+
 def test_my_hosts_api_error(mock_shell):
     """Test my_hosts when API call fails"""
     mock_shell.connection.is_connected = True
