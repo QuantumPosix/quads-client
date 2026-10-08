@@ -41,8 +41,32 @@ class TestRedaction:
     def test_redaction_is_case_insensitive(self):
         assert http_debug._redact({"Password": "x"}) == {"Password": "***"}
 
+    def test_redacts_token_and_secret_aliases(self):
+        data = {
+            "access_token": "atóken",
+            "client_secret": "s3cret",
+            "apiKey": "k-123",
+            "Api_Key": "k-456",
+        }
+        redacted = http_debug._redact(data)
+        assert set(redacted.values()) == {"***"}
+
     def test_non_mapping_passthrough(self):
         assert http_debug._redact("plain") == "plain"
+
+
+class TestUrlRedaction:
+    def test_strips_userinfo(self):
+        url = "https://jdoe:hunter2@quads.example.com/api/v3/x"
+        assert http_debug._redact_url(url) == "https://quads.example.com/api/v3/x"
+
+    def test_masks_credential_query_params(self):
+        url = "https://quads.example.com/api/v3/x?access_token=qat_1&name=ok"
+        assert http_debug._redact_url(url) == ("https://quads.example.com/api/v3/x?access_token=%2A%2A%2A&name=ok")
+
+    def test_keeps_plain_url(self):
+        url = "https://quads.example.com/api/v3/assignments?active=True"
+        assert http_debug._redact_url(url) == url
 
 
 class TestFormatBody:

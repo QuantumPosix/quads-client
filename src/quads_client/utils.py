@@ -88,8 +88,14 @@ def response_error(response, *required_keys):
     if not isinstance(response, dict):
         return "no response from server"
     status = response.get("status_code")
+    if isinstance(status, str) and status.isdigit():
+        status = int(status)
     if response.get("error") or (isinstance(status, int) and status >= 400):
         return response.get("message") or response.get("error") or f"HTTP {status}"
+    if not required_keys and "message" in response and len(response) == 1:
+        # Some proxies return a bare message with no status marker; that is
+        # never a success payload (successes carry identifiers).
+        return response["message"]
     missing = [key for key in required_keys if key not in response]
     if missing:
         return "unexpected response from server (missing: %s)" % ", ".join(missing)

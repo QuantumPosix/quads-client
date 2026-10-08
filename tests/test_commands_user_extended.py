@@ -263,6 +263,46 @@ def test_schedule_happy_path_reports_reserved(mock_shell):
     assert "cloud02" in output
 
 
+def test_schedule_create_schedule_message_only_error(mock_shell):
+    """A bare message error body must not count as a scheduled host"""
+    mock_shell.connection.is_connected = True
+    mock_shell.connection.is_authenticated = True
+    mock_shell.connection.is_admin = False
+    mock_shell.connection.username = "user@example.com"
+    mock_shell.connection.api.create_self_assignment.return_value = {
+        "id": 123,
+        "cloud": {"name": "cloud02"},
+    }
+    mock_shell.connection.api.create_schedule.return_value = {"message": "forbidden"}
+
+    user_cmd = UserCommands(mock_shell)
+    user_cmd.cmd_schedule('host01.example.com description "Test"')
+
+    error_calls = [str(call) for call in mock_shell.perror.call_args_list]
+    assert any("Failed to schedule any hosts" in call for call in error_calls)
+    output = " ".join(str(call) for call in mock_shell.poutput.call_args_list)
+    assert "Reserved" not in output
+
+
+def test_schedule_assignment_without_cloud_still_schedules(mock_shell):
+    """A success that does not echo cloud falls back to unknown, not an abort"""
+    mock_shell.connection.is_connected = True
+    mock_shell.connection.is_authenticated = True
+    mock_shell.connection.is_admin = False
+    mock_shell.connection.username = "user@example.com"
+    mock_shell.connection.api.create_self_assignment.return_value = {"id": 123}
+    mock_shell.connection.api.create_schedule.return_value = {"id": 1}
+
+    user_cmd = UserCommands(mock_shell)
+    user_cmd.cmd_schedule('host01.example.com description "Test"')
+
+    error_calls = [str(call) for call in mock_shell.perror.call_args_list]
+    assert not any("Self-assignment failed" in call for call in error_calls)
+    mock_shell.connection.api.create_schedule.assert_called_once()
+    output = " ".join(str(call) for call in mock_shell.poutput.call_args_list)
+    assert "Reserved 1 host(s)" in output
+
+
 def test_my_hosts_api_error(mock_shell):
     """Test my_hosts when API call fails"""
     mock_shell.connection.is_connected = True

@@ -1,4 +1,4 @@
-"""Tests for the cmd2 compatibility helpers (2.x, 3.x, and 4.x)."""
+"""Tests for the cmd2 compatibility helpers (3.x and 4.x)."""
 
 from __future__ import annotations
 

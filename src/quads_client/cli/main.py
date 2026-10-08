@@ -16,10 +16,9 @@ def main():
     """
     argv = sys.argv[1:]
     debug = False
-    for flag in ("--debug", "-d"):
-        if flag in argv:
-            argv.remove(flag)
-            debug = True
+    if argv and argv[0] in ("--debug", "-d"):
+        argv = argv[1:]
+        debug = True
 
     is_oneshot = len(argv) > 0
     is_piped = not sys.stdin.isatty()
