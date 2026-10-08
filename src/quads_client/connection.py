@@ -3,6 +3,7 @@ import sys
 import jwt
 import urllib3
 from quads_lib import QuadsApi
+from quads_client import http_debug
 from quads_client.config import QuadsClientConfig
 
 
@@ -213,6 +214,9 @@ class ConnectionManager:
 
                 # Try to decode role from token
                 self._user_role = self._decode_role_from_token()
+
+            # Attach HTTP debug tracing to the live session (no-op unless debug is on)
+            http_debug.install(self._api.session)
 
         except Exception as e:
             # Provide user-friendly error messages

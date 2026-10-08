@@ -13,6 +13,7 @@ from quads_client.commands.session import SessionCommands
 from quads_client.commands.track import TrackCommands
 from quads_client.commands.user import UserCommands
 from quads_client.commands.version import VersionCommands
+from quads_client import http_debug
 from quads_client.config import ConfigError, QuadsClientConfig
 from quads_client.history import CommandHistory
 from quads_client.rich_console import RichConsole
@@ -29,6 +30,8 @@ class QuadsClientShell(cmd2.Cmd):
             persistent_history_file="~/.config/quads/.quads-client_readline_history",
             persistent_history_length=1000,
         )
+        # Route HTTP debug tracing through the shell's live debug flag
+        http_debug.configure(lambda: self.debug)
         self.config = None
         self.session_manager = None
         self.command_history = CommandHistory()
