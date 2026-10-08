@@ -13,6 +13,7 @@ from quads_client.utils import (
     get_ssl_status_text,
     get_username_short,
     resolve_os,
+    response_error,
     validate_cloud_exists,
 )
 
@@ -558,3 +559,42 @@ def test_resolve_os_none_list():
     title, error = resolve_os(mock_api, "RHEL 10.0")
     assert title is None
     assert "not found" in error
+
+
+# Tests for response_error()
+def test_response_error_invalid_token():
+    """Error body with 'error' key returns the server message"""
+    response = {"status_code": 401, "error": "Unauthorized", "message": "Invalid API token!"}
+    assert response_error(response) == "Invalid API token!"
+
+
+def test_response_error_status_code_only():
+    """status_code >= 400 without message falls back to error then HTTP status"""
+    assert response_error({"status_code": 403}) == "HTTP 403"
+    assert response_error({"status_code": 403, "error": "Forbidden"}) == "Forbidden"
+
+
+def test_response_error_none():
+    """None (no response object) is treated as a failure"""
+    assert response_error(None) == "no response from server"
+
+
+def test_response_error_non_dict():
+    """A non-dict response is treated as a failure"""
+    assert response_error("boom") == "no response from server"
+
+
+def test_response_error_missing_required_key():
+    """A valid dict missing a required key reports what is missing"""
+    result = response_error({"id": 42}, "id", "cloud")
+    assert result == "unexpected response from server (missing: cloud)"
+
+
+def test_response_error_valid():
+    """A valid dict with all required keys returns None"""
+    assert response_error({"id": 42, "cloud": {"name": "cloud17"}}, "id", "cloud") is None
+
+
+def test_response_error_valid_no_required_keys():
+    """A plain success dict with no required keys returns None"""
+    assert response_error({"id": 1}) is None
