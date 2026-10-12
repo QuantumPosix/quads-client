@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from quads_client.gui.widgets.dialogs import show_error_dialog
+from quads_client.proxies import normalize_proxy
 from quads_client.utils import fetch_server_version
 
 
@@ -224,7 +225,7 @@ class ConnectionView(ttk.Frame):
         try:
             url = server_config.get("url", "")
             verify = server_config.get("verify", True)
-            proxy = server_config.get("proxy", "")
+            proxy = normalize_proxy(server_config.get("proxy", ""))
             if not url:
                 return "-"
 
