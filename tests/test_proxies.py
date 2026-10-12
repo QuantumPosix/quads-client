@@ -122,6 +122,17 @@ class TestParseProxyRedaction:
             parse_proxy("socks5h://alice:sekret@proxy.local:notaport")
         assert "sekret" not in str(excinfo.value)
 
+    def test_bare_userinfo_does_not_leak_credentials(self):
+        with pytest.raises(ProxyError) as excinfo:
+            parse_proxy("socks5h://alice:sekret@")
+        assert "sekret" not in str(excinfo.value)
+
+    def test_missing_scheme_separator_does_not_leak_credentials(self):
+        with pytest.raises(ProxyError) as excinfo:
+            parse_proxy("alice:sekret@proxy.local:1080")
+        assert "sekret" not in str(excinfo.value)
+        assert "proxy.local" in str(excinfo.value)
+
 
 class TestEnvCaBundleWithProxy:
     def _api(self, verify=True):
@@ -134,27 +145,38 @@ class TestEnvCaBundleWithProxy:
         monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/tmp/corp-ca.pem")
         api = self._api(verify=True)
         apply_proxy_to_session(api, "socks5h://127.0.0.1:1080")
-        assert api.session.verify == "/tmp/corp-ca.pem"
+        assert api.verify == "/tmp/corp-ca.pem"
 
     def test_curl_ca_bundle_used_as_fallback(self, monkeypatch):
         monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
         monkeypatch.setenv("CURL_CA_BUNDLE", "/tmp/curl-ca.pem")
         api = self._api(verify=True)
         apply_proxy_to_session(api, "socks5h://127.0.0.1:1080")
-        assert api.session.verify == "/tmp/curl-ca.pem"
+        assert api.verify == "/tmp/curl-ca.pem"
 
     def test_ca_bundle_ignored_when_verification_disabled(self, monkeypatch):
         monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/tmp/corp-ca.pem")
         api = self._api(verify=False)
         apply_proxy_to_session(api, "socks5h://127.0.0.1:1080")
-        assert api.session.verify is True
+        assert api.verify is False
 
-    def test_no_ca_bundle_env_keeps_session_default(self, monkeypatch):
+    def test_no_ca_bundle_env_keeps_verify_default(self, monkeypatch):
         monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
         monkeypatch.delenv("CURL_CA_BUNDLE", raising=False)
         api = self._api(verify=True)
         apply_proxy_to_session(api, "socks5h://127.0.0.1:1080")
-        assert api.session.verify is True
+        assert api.verify is True
+
+    def test_ca_bundle_reaches_per_request_verify(self, monkeypatch):
+        # quads-lib passes verify=self.verify on every request, which overrides
+        # session.verify. With trust_env off the CA bundle only reaches the wire
+        # through the api-level verify, exactly what merge_environment_settings
+        # receives in _make_request/login.
+        monkeypatch.setenv("REQUESTS_CA_BUNDLE", "/tmp/corp-ca.pem")
+        api = self._api(verify=True)
+        apply_proxy_to_session(api, "socks5h://127.0.0.1:1080")
+        settings = api.session.merge_environment_settings("https://quads.example.com", {}, None, api.verify, None)
+        assert settings["verify"] == "/tmp/corp-ca.pem"
 
 
 class TestNormalizeProxy:

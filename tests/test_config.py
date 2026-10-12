@@ -431,6 +431,26 @@ def test_get_server_proxy_strips_whitespace(tmp_path):
     assert config.get_server_proxy("test_server") == "socks5h://127.0.0.1:1080"
 
 
+def test_get_server_proxy_none_sentinel_clears(tmp_path):
+    """Test proxy accessor maps a hand-edited 'proxy: none' to no proxy"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump({"servers": {"test_server": {"url": "https://test.example.com", "proxy": "none"}}})
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    assert config.get_server_proxy("test_server") == ""
+
+
+def test_get_server_proxy_dash_sentinel_clears(tmp_path):
+    """Test proxy accessor maps a hand-edited 'proxy: -' to no proxy"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(yaml.dump({"servers": {"test_server": {"url": "https://test.example.com", "proxy": "-"}}}))
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    assert config.get_server_proxy("test_server") == ""
+
+
 def test_get_server_proxy_rejects_invalid_url(tmp_path):
     """Test proxy accessor validates the proxy URL"""
     config_file = tmp_path / "quads-client.yml"
