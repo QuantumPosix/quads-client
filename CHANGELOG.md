@@ -1,6 +1,79 @@
 # CHANGELOG
 
 
+## v0.10.0 (2026-10-12)
+
+### Bug Fixes
+
+- Make proxy CA bundle reach the wire and stop credential leaks
+  ([`88c31ad`](https://github.com/quadsproject/quads-client/commit/88c31adb73c31acb2e076ac1d03b8325091b61a9))
+
+- apply_proxy_to_session sets api.verify (the attribute quads-lib reads on every request) so
+  REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE survive trust_env being disabled; it was only setting
+  session.verify, which quads-lib overrides per request. - redact_proxy strips userinfo
+  unconditionally, so malformed proxy strings (bare userinfo@, missing scheme separator) no longer
+  leak credentials in error messages. - get_server_proxy normalizes the none/- sentinels so a
+  hand-edited config clears the proxy like the CLI and GUI paths.
+
+- Trace connect handshake under debug and align cmd2 compat docs
+  ([`4281904`](https://github.com/quadsproject/quads-client/commit/42819044150ce9f94574a122b9380b33c069ae4f))
+
+Install the HTTP debug hook on the session before the connect handshake (token-mode get_version and
+  normal-mode login) so --debug traces those calls too. The hook is idempotent and a no-op when
+  debug is off.
+
+Add a version-independent get_command_func hyphen-fallback test mirroring the cmd_func one so the
+  cmd2 4.x fallback is pinned on every interpreter.
+
+Correct the cmd2 version mentions in the shell/compat docstrings: the >=3.0.0 floor is a support
+  choice, and the client has no Cmd2ArgumentParser usage (the suite passes on 2.5.11 too).
+
+- Validate wizard proxy, restore positional arg order, and relax PySocks pin
+  ([`c2ff4b3`](https://github.com/quadsproject/quads-client/commit/c2ff4b30caf738243f947da77fe6a5bb1b82a85a))
+
+- The add-quads-server wizard re-prompts on a malformed proxy instead of storing it after an 'add
+  anyway' confirm, matching add_server_programmatic and edit_server_programmatic. - proxy is
+  appended after test_connection (add) and after api_token (edit) so existing positional callers are
+  unaffected. - The GUI server-version probe normalizes the none/- sentinel before probing, matching
+  the CLI so a hand-edited proxy: none no longer shows '-'. - The RPM spec requires python3-pysocks
+  >= 1.7.0 (not 1.7.1) so older Fedora releases with 1.7.0 can satisfy the dependency.
+
+### Chores
+
+- Update RPM spec version to 0.9.0
+  ([`e08c1aa`](https://github.com/quadsproject/quads-client/commit/e08c1aaef0bd7b157507282ff38083112d52fac4))
+
+### Features
+
+- Add per-server SOCKS5 and HTTP proxy support
+  ([`d11fd40`](https://github.com/quadsproject/quads-client/commit/d11fd4058c2bf956e38f1bee14d2d7df999dbfed))
+
+Route all CLI and GUI traffic for a server through a per-server proxy configured as
+  servers.<name>.proxy in ~/.config/quads/quads-client.yml, for example socks5h://127.0.0.1:1080 for
+  an SSH dynamic forward.
+
+- proxies.py builds the requests proxy map from a single URL, supports http, https, socks4, socks4a,
+  socks5 and socks5h schemes with URL userinfo, and reports a clear error when PySocks is missing. -
+  normalize_proxy maps the documented none/- sentinels to no proxy, so clearing a proxy behaves the
+  same from the CLI, the GUI and scripts. - ConnectionManager.build_api is the single API
+  construction point, so connect, the servers table and the login/token paths all get the configured
+  proxy. A configured proxy overrides the proxy environment variables, which would otherwise hijack
+  the session. - fetch_server_version replaces the three duplicated /api/v3/version probes so the
+  reachability checks in the CLI and GUI also route through the proxy. - add_quads_server,
+  add-server, edit-server (proxy <url>, proxy none), the GUI Add/Edit dialogs and the onboarding
+  wizard collect the value. Add and edit validate it up front, so a typo fails immediately instead
+  of surfacing at the next connect. - README documents the feature with a TOC entry, the example
+  config shows the key, and PySocks is declared in pyproject, requirements.txt and the RPM spec
+  (AutoReq is off, so it must be listed).
+
+Verification: full suite 1203 passed with coverage 89.66 percent (was
+
+89.25), black and flake8 clean, plus a live in-process RFC1928 SOCKS5 server proving connect, probes
+  and socks5 versus socks5h behaviour.
+
+fixes: https://github.com/quadsproject/quads-client/issues/195
+
+
 ## v0.9.0 (2026-10-08)
 
 ### Bug Fixes
