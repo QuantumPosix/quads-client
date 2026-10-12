@@ -5,11 +5,17 @@ servers:
     password: ""
     api_token: ""
     verify: true
+    # Optional: route this server's connections through a proxy
+    # Example: an SSH dynamic forward (ssh -D 1080 jump-host) -> socks5h://127.0.0.1:1080
+    proxy: ""
   quads2.rdu2.scalelab:
     url: https://quads2.rdu2.scalelab.example.com
     username: ""
     password: ""
     api_token: ""
     verify: true
+    # Optional: route this server's connections through a proxy
+    # Example: an SSH dynamic forward (ssh -D 1080 jump-host) -> socks5h://127.0.0.1:1080
+    proxy: ""
 
 default_server: quads1.rdu2.scalelab

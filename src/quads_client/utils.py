@@ -193,6 +193,57 @@ def get_ssl_indicator(url: str, verify: bool) -> tuple[str, str]:
         return "✗", "\033[1;33m"
 
 
+def fetch_server_version(url: str, verify: bool, proxy: str = "", timeout: int = 5) -> tuple[int, str | None]:
+    """
+    Probe the public /api/v3/version endpoint of a QUADS server.
+
+    Routes through the per-server proxy when one is configured, so
+    reachability checks work in proxy-only environments.
+
+    Args:
+        url: Server base URL (http:// or https://)
+        verify: Whether to verify SSL certificates
+        proxy: Optional proxy URL (http, https, socks4, socks5, socks5h)
+        timeout: Request timeout in seconds
+
+    Returns:
+        tuple: (status_code, version). Version is None unless a 200
+            response carried a parseable version.
+
+    Raises:
+        requests.RequestException: network/transport failure
+        quads_client.proxies.ProxyError: invalid or unusable proxy URL
+    """
+    from quads_client.proxies import build_proxy_map
+
+    import requests
+
+    proxies = build_proxy_map(proxy) or None
+
+    if not verify:
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    response = requests.get(f"{url}/api/v3/version", verify=verify, proxies=proxies, timeout=timeout)
+
+    version = None
+    if response.status_code == 200:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict):
+            candidate = payload.get("version")
+            if isinstance(candidate, str) and candidate and candidate != "unknown":
+                version = candidate
+        elif isinstance(payload, str):
+            match = re.search(r"(\d+\.\d+\.\d+)", payload)
+            if match:
+                version = match.group(1)
+    return response.status_code, version
+
+
 def get_ssl_status_text(url: str, verify: bool) -> str:
     """
     Get SSL status text for table display.
