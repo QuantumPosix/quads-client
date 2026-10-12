@@ -195,7 +195,17 @@ class ServerCommands:
         verify = verify_input != "n"
 
         # Optional per-server proxy for proxy-only environments
-        proxy = normalize_proxy(input("Proxy URL [none] (e.g. socks5h://127.0.0.1:1080): "))
+        # Reject a typo'd proxy here rather than letting the probe report a
+        # connection failure and writing the bad value when the user confirms.
+        while True:
+            proxy = normalize_proxy(input("Proxy URL [none] (e.g. socks5h://127.0.0.1:1080): "))
+            if not proxy:
+                break
+            try:
+                parse_proxy(proxy)
+                break
+            except ProxyError as e:
+                self.shell.perror(f"Invalid proxy: {e}")
 
         # Authentication method
         import getpass
@@ -280,7 +290,7 @@ class ServerCommands:
             self.shell.perror(f"Failed to save configuration: {e}")
 
     def add_server_programmatic(
-        self, name, url, username="", password="", verify=True, proxy="", test_connection=True
+        self, name, url, username="", password="", verify=True, test_connection=True, proxy=""
     ):
         """
         Non-interactive server add for GUI and scripting.
@@ -291,8 +301,8 @@ class ServerCommands:
             username: Username (optional, empty string for registration mode)
             password: Password (optional, empty string for registration mode)
             verify: Enable SSL verification (default: True)
-            proxy: Proxy URL for outbound connections (optional, e.g. socks5h://127.0.0.1:1080)
             test_connection: Test connection before adding (default: True)
+            proxy: Proxy URL for outbound connections (optional, e.g. socks5h://127.0.0.1:1080)
 
         Returns:
             (success: bool, message: str, version: str or None)
@@ -367,7 +377,7 @@ class ServerCommands:
             return (False, f"Failed to save configuration: {e}", None)
 
     def edit_server_programmatic(
-        self, name, url=None, username=None, password=None, verify=None, proxy=None, api_token=None
+        self, name, url=None, username=None, password=None, verify=None, api_token=None, proxy=None
     ):
         """
         Non-interactive server edit for GUI and scripting.
@@ -378,8 +388,8 @@ class ServerCommands:
             username: New username (optional, None = no change)
             password: New password (optional, None = no change)
             verify: New SSL verification setting (optional, None = no change)
-            proxy: New proxy URL (optional, None = no change, empty string = disable proxy)
             api_token: New API token (optional, None = no change)
+            proxy: New proxy URL (optional, None = no change, empty string = disable proxy)
 
         Returns:
             (success: bool, message: str)

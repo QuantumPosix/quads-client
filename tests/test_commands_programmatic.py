@@ -97,6 +97,27 @@ class TestServerCommandsProgrammatic:
                     assert success is True
                     assert version is None  # No connection test = no version
 
+    def test_add_server_programmatic_positional_test_connection_false(self, server_commands):
+        """'test_connection' stays the 6th positional arg, so old positional callers still skip the probe"""
+        mock_config_data = {"servers": {}}
+
+        with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+            with patch("yaml.safe_load", return_value=mock_config_data):
+                with patch("yaml.dump"):
+                    with patch("requests.get") as mock_get:
+                        success, message, version = server_commands.add_server_programmatic(
+                            "test-server",
+                            "https://test.example.com",
+                            "user@example.com",
+                            "pass",
+                            True,
+                            False,
+                        )
+
+                        assert success is True
+                        assert version is None
+                        assert mock_get.call_count == 0
+
     def test_add_server_programmatic_duplicate(self, server_commands):
         """Test adding duplicate server"""
         mock_config_data = {
@@ -503,6 +524,24 @@ def test_edit_server_programmatic_sets_proxy(server_commands, mock_shell):
     assert success is True
     written = mock_dump.call_args[0][0]
     assert written["servers"]["test-server"]["proxy"] == "socks5h://127.0.0.1:1080"
+
+
+def test_edit_server_programmatic_positional_api_token(server_commands, mock_shell):
+    """'api_token' stays the 6th positional arg, so old positional callers still pass the token"""
+    mock_config_data = {"servers": {"test-server": {"url": "https://test.example.com"}}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message = server_commands.edit_server_programmatic(
+                        "test-server", None, None, None, None, "qat_token123"
+                    )
+
+    assert success is True
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["test-server"]["api_token"] == "qat_token123"
+    assert written["servers"]["test-server"].get("proxy", "") == ""
 
 
 def test_edit_server_programmatic_clears_proxy(server_commands, mock_shell):

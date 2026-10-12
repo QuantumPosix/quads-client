@@ -689,6 +689,35 @@ def test_add_quads_server_wizard_none_means_no_proxy(mock_shell):
     assert written["servers"]["quads3.example.com"]["proxy"] == ""
 
 
+def test_add_quads_server_wizard_rejects_malformed_proxy(mock_shell):
+    """Test the wizard re-prompts on a typo'd proxy instead of storing it"""
+    mock_shell.config.config_path = "~/.config/quads/quads-client.yml"
+    yaml_content = {"servers": {}}
+
+    inputs = [
+        "quads3.example.com",
+        "https://quads3.example.com",
+        "y",
+        "ftp://127.0.0.1:21",  # malformed -> rejected, re-prompt
+        "http://127.0.0.1:3128",  # valid replacement
+        "3",
+    ]
+    with patch("builtins.input", side_effect=inputs):
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            with patch("builtins.open", mock_open(read_data="servers: {}\n")):
+                with patch("yaml.safe_load", return_value=yaml_content):
+                    with patch("yaml.dump") as mock_dump:
+                        with patch.object(ServerCommands, "cmd_config_reload"):
+                            server_cmd = ServerCommands(mock_shell)
+                            server_cmd.cmd_add_quads_server("")
+
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["quads3.example.com"]["proxy"] == "http://127.0.0.1:3128"
+    rendered = str(mock_shell.perror.call_args_list)
+    assert "Invalid proxy" in rendered
+
+
 def test_edit_server_cli_proxy_argument_still_redacts_in_errors(mock_shell):
     """Test proxy validation failure messages shown by edit-server hide credentials"""
     mock_shell.config.config_path = "~/.config/quads/quads-client.yml"
