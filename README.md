@@ -25,6 +25,7 @@ QUADS Client provides both a powerful CLI and an intuitive GUI for managing mult
 - **Command History**: SQLite-based persistent command history per server
 - **Unified Schedule Command**: Combines cloud assignment creation and host scheduling in a single operation for simpler workflows
 - **Move Progress Tracking**: Monitor host moves through the 12-stage provisioning pipeline via `move_status`, live `track` with Rich auto-refresh, `activity` cloud-grouped summaries, and GUI Move Progress view
+- **SOCKS5 Proxy Support**: Route a server's API traffic through a per-server HTTP/SOCKS proxy, e.g. an SSH dynamic forward
 - **Connection Management**: Easy switching between QUADS server instances
 - **Thin Wrapper Design**: Server-side authorization via QUADS API
 
@@ -39,6 +40,7 @@ QUADS Client provides both a powerful CLI and an intuitive GUI for managing mult
   - [Quick Setup (Recommended)](#quick-setup-recommended)
   - [Manual Configuration (Advanced)](#manual-configuration-advanced)
   - [SSL/TLS Security Indicator](#ssltls-security-indicator)
+  - [SOCKS5 Proxy Support](#socks5-proxy-support)
 - [How to Self-Schedule](#how-to-self-schedule)
 - [Usage](#usage)
   - [GUI Mode](#gui-mode)
@@ -196,6 +198,7 @@ $ quads-client
 Enter a friendly name for this server (e.g., my-quads, scalelab): quads_prod
 Enter server URL (e.g., https://quads1.example.com): https://quads.example.com
 Enable SSL certificate verification? [Y/n]: Y
+Proxy URL [none] (e.g. socks5h://127.0.0.1:1080): none
 
 Authentication method:
   1) Username & Password
@@ -257,6 +260,41 @@ The client displays a visual security indicator in the prompt showing the SSL/TL
 > 
 > **Setting up SSL/TLS on your QUADS server:**  
 > See the [QUADS SSL configuration guide](https://github.com/quadsproject/quads#using-ssl-with-flask-api-and-quads) for instructions on configuring nginx with SSL certificates.
+
+### SOCKS5 Proxy Support
+
+Each server entry can carry an optional `proxy`. When set, all traffic for that server goes through the proxy, in both the CLI and the GUI, including the server reachability and version probes.
+
+Configure it per server in `~/.config/quads/quads-client.yml`:
+
+```yaml
+servers:
+  quads-prod.example.com:
+    url: https://quads-prod.example.com
+    api_token: "qat_your_token"
+    verify: true
+    proxy: socks5h://127.0.0.1:1080
+```
+
+Set it interactively with `add_quads_server` (it prompts for a proxy URL), with `edit-server <name> proxy socks5h://127.0.0.1:1080`, or in the GUI via the "Proxy URL (optional)" field in the Add/Edit Server dialogs.
+
+Supported schemes are `http`, `https`, `socks4`, `socks4a`, `socks5`, and `socks5h`. Provide credentials via URL userinfo, for example `socks5h://user:pass@127.0.0.1:1080`.
+
+- `socks5h` resolves DNS on the proxy side. Use it when the QUADS server is only resolvable from the jump host.
+- `socks5` resolves DNS locally.
+
+A configured `proxy` is authoritative and overrides the `http_proxy`, `https_proxy`, and `all_proxy` environment variables. With no `proxy` set, the standard environment variables keep working as before.
+
+SOCKS schemes need the `PySocks` package (`python3-pysocks` on Fedora/EPEL). Installing via pip pulls it in automatically.
+
+While a `proxy` is set for a server, that server's sessions stop honoring the `no_proxy` exemption list, and the `REQUESTS_CA_BUNDLE`/`CURL_CA_BUNDLE` variables are carried over explicitly when certificate verification is enabled. This keeps a configured proxy from being overridden by the proxy variables it was configured to bypass. With no `proxy` set, none of this applies.
+
+Proxy URLs support credentials in the userinfo part (`socks5h://user:pass@127.0.0.1:1080`) and are stored in the config file in plain text, like server passwords. Error messages strip these credentials. Note that a proxy URL set with `edit-server ... proxy <url>` is also recorded in the shell command history; clear it from the history or set the value in the config file if that matters for your environment.
+
+> [!NOTE]
+> Changing the proxy takes effect on the next `connect`. A live connection is not re-routed. In the GUI, editing a server's proxy offers to reconnect; from the CLI, run `connect` again after `edit-server`.
+
+Clear the proxy with `edit-server <name> proxy none`, an empty `proxy: ""` in the config file, or an empty Proxy URL field in the GUI dialogs.
 
 ## Usage
 
@@ -1272,6 +1310,7 @@ quads-client/
 - argcomplete >= 3.1.2
 - tabulate >= 0.9.0
 - rich >= 13.0.0 (for enhanced terminal UI)
+- PySocks >= 1.7.1
 
 ## Development
 

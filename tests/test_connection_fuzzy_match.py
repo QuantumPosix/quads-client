@@ -31,6 +31,7 @@ def mock_config_fuzzy():
     )
     config.get_server_verify.return_value = True
     config.get_server_api_token.return_value = ""
+    config.get_server_proxy.return_value = ""
     return config
 
 

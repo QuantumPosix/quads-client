@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from quads_client.gui.widgets.dialogs import show_error_dialog
+from quads_client.proxies import normalize_proxy
+from quads_client.utils import fetch_server_version
 
 
 class ConnectionView(ttk.Frame):
@@ -221,26 +223,15 @@ class ConnectionView(ttk.Frame):
     def _get_server_version(self, name, server_config):
         """Fetch QUADS version from server using public endpoint only (no login)"""
         try:
-            import requests
-
             url = server_config.get("url", "")
             verify = server_config.get("verify", True)
+            proxy = normalize_proxy(server_config.get("proxy", ""))
             if not url:
                 return "-"
 
-            response = requests.get(f"{url}/api/v3/version", verify=verify, timeout=5)
-            if response.status_code == 200:
-                import re
-
-                version_data = response.json()
-                if isinstance(version_data, dict):
-                    version = version_data.get("version", "")
-                    if version and version != "unknown":
-                        return version
-                elif isinstance(version_data, str):
-                    match = re.search(r"(\d+\.\d+\.\d+)", version_data)
-                    if match:
-                        return match.group(1)
+            status_code, version = fetch_server_version(url, verify, proxy)
+            if status_code == 200 and version:
+                return version
             return "-"
         except Exception:
             return "-"
@@ -404,8 +395,8 @@ class ConnectionView(ttk.Frame):
         """Add a new server"""
         dialog = tk.Toplevel(self)
         dialog.title("Add Server")
-        dialog.geometry("500x400")
-        dialog.minsize(500, 400)
+        dialog.geometry("500x460")
+        dialog.minsize(500, 460)
         dialog.transient(self)
         dialog.grab_set()
 
@@ -434,6 +425,10 @@ class ConnectionView(ttk.Frame):
             row=4, column=1, sticky=tk.W, padx=20, pady=8
         )
 
+        ttk.Label(dialog, text="Proxy URL (optional):").grid(row=5, column=0, sticky=tk.W, padx=20, pady=8)
+        proxy_entry = ttk.Entry(dialog, width=30)
+        proxy_entry.grid(row=5, column=1, padx=20, pady=8)
+
         tip_label = ttk.Label(
             dialog,
             text="💡 Username and password can be left blank.\nYou'll be prompted to login after connecting.",
@@ -441,13 +436,14 @@ class ConnectionView(ttk.Frame):
             foreground="gray",
             justify=tk.LEFT,
         )
-        tip_label.grid(row=5, column=0, columnspan=2, padx=20, pady=(2, 8), sticky=tk.W)
+        tip_label.grid(row=6, column=0, columnspan=2, padx=20, pady=(2, 8), sticky=tk.W)
 
         def save_server():
             name = name_entry.get().strip()
             url = url_entry.get().strip()
             username = username_entry.get().strip()
             password = password_entry.get()
+            proxy = proxy_entry.get().strip()
 
             if not name or not url:
                 messagebox.showerror("Error", "Name and URL are required")
@@ -462,6 +458,7 @@ class ConnectionView(ttk.Frame):
                 username=user,
                 password=pwd,
                 verify=verify_var.get(),
+                proxy=proxy,
                 test_connection=True,
             )
 
@@ -481,6 +478,7 @@ class ConnectionView(ttk.Frame):
                             username=user,
                             password=pwd,
                             verify=verify_var.get(),
+                            proxy=proxy,
                             test_connection=False,
                         )
                         if not success:
@@ -506,7 +504,7 @@ class ConnectionView(ttk.Frame):
                 )
 
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=6, column=0, columnspan=2, pady=(10, 15))
+        button_frame.grid(row=7, column=0, columnspan=2, pady=(10, 15))
 
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Add", command=save_server).pack(side=tk.LEFT, padx=5)
@@ -688,8 +686,8 @@ class ConnectionView(ttk.Frame):
 
         dialog = tk.Toplevel(self)
         dialog.title(f"Edit Server: {self.selected_server}")
-        dialog.geometry("500x350")
-        dialog.minsize(500, 350)
+        dialog.geometry("500x410")
+        dialog.minsize(500, 410)
         dialog.transient(self)
         dialog.grab_set()
 
@@ -721,6 +719,11 @@ class ConnectionView(ttk.Frame):
             row=4, column=1, sticky=tk.W, padx=20, pady=8
         )
 
+        ttk.Label(dialog, text="Proxy URL (optional):").grid(row=5, column=0, sticky=tk.W, padx=20, pady=8)
+        proxy_entry = ttk.Entry(dialog, width=30)
+        proxy_entry.grid(row=5, column=1, padx=20, pady=8)
+        proxy_entry.insert(0, server_config.get("proxy", ""))
+
         server_name = self.selected_server
 
         def on_save():
@@ -730,6 +733,8 @@ class ConnectionView(ttk.Frame):
                 return
 
             old_url = server_config.get("url", "")
+            old_proxy = server_config.get("proxy", "")
+            proxy = proxy_entry.get().strip()
 
             success, message = self.shell.server_commands.edit_server_programmatic(
                 name=server_name,
@@ -737,6 +742,7 @@ class ConnectionView(ttk.Frame):
                 username=username_entry.get().strip(),
                 password=password_entry.get(),
                 verify=verify_var.get(),
+                proxy=proxy,
             )
 
             if not success:
@@ -752,10 +758,10 @@ class ConnectionView(ttk.Frame):
 
             dialog.destroy()
 
-            if old_url != new_url and is_connected:
+            if (old_url != new_url or old_proxy != proxy) and is_connected:
                 if messagebox.askyesno(
                     "Reconnect?",
-                    f"Server URL changed.\n\nReconnect to '{server_name}' with the new settings?",
+                    f"Server settings changed.\n\nReconnect to '{server_name}' with the new settings?",
                 ):
                     try:
                         # Disconnect the specific session for this server
@@ -776,7 +782,7 @@ class ConnectionView(ttk.Frame):
             messagebox.showinfo("Success", message)
 
         button_frame = ttk.Frame(dialog)
-        button_frame.grid(row=5, column=0, columnspan=2, pady=(10, 15))
+        button_frame.grid(row=6, column=0, columnspan=2, pady=(10, 15))
 
         ttk.Button(button_frame, text="Cancel", command=dialog.destroy).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Save", command=on_save).pack(side=tk.LEFT, padx=5)

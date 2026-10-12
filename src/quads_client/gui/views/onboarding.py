@@ -120,6 +120,10 @@ class OnboardingWizard(tk.Toplevel):
         ssl_check = ttk.Checkbutton(form_frame, text="Verify SSL certificate", variable=self.verify_ssl_var)
         ssl_check.grid(row=2, column=1, sticky=tk.W, pady=8)
 
+        ttk.Label(form_frame, text="Proxy URL (optional):").grid(row=3, column=0, sticky=tk.W, pady=8)
+        self.proxy_entry = ttk.Entry(form_frame, width=30)
+        self.proxy_entry.grid(row=3, column=1, pady=8, padx=10)
+
         hint_label = ttk.Label(
             self.content_frame,
             text="Tip: You can add more servers later from the Servers view.",
@@ -269,6 +273,7 @@ class OnboardingWizard(tk.Toplevel):
         """Validate and save server data"""
         name = self.server_name_entry.get().strip()
         url = self.server_url_entry.get().strip()
+        proxy = self.proxy_entry.get().strip()
 
         if not name:
             messagebox.showerror("Error", "Server name is required")
@@ -282,6 +287,7 @@ class OnboardingWizard(tk.Toplevel):
             "name": name,
             "url": url,
             "verify": self.verify_ssl_var.get(),
+            "proxy": proxy,
         }
 
         try:
@@ -292,6 +298,7 @@ class OnboardingWizard(tk.Toplevel):
                 username="",  # Empty triggers registration mode
                 password="",  # Empty triggers registration mode
                 verify=self.verify_ssl_var.get(),
+                proxy=proxy,
                 test_connection=True,
             )
 

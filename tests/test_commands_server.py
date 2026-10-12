@@ -332,7 +332,7 @@ def test_add_quads_server_success(mock_shell):
 
     yaml_content = {"servers": {}}
 
-    with patch("builtins.input", side_effect=["quads3.example.com", "https://quads3.example.com", "y", "3"]):
+    with patch("builtins.input", side_effect=["quads3.example.com", "https://quads3.example.com", "y", "", "3"]):
         with patch("requests.get") as mock_get:
             mock_get.return_value.status_code = 200
             with patch("builtins.open", mock_open(read_data="servers: {}\n")):
@@ -359,7 +359,7 @@ def test_add_quads_server_second_server_no_default_change(mock_shell):
         "default_server": "existing.example.com",
     }
 
-    with patch("builtins.input", side_effect=["quads4.example.com", "https://quads4.example.com", "y", "3"]):
+    with patch("builtins.input", side_effect=["quads4.example.com", "https://quads4.example.com", "y", "", "3"]):
         with patch("requests.get") as mock_get:
             mock_get.return_value.status_code = 200
             with patch("builtins.open", mock_open(read_data="servers: {}\n")):
@@ -403,7 +403,7 @@ def test_add_quads_server_no_verify(mock_shell):
 
     yaml_content = {"servers": {}}
 
-    with patch("builtins.input", side_effect=["quads3.example.com", "https://quads3.example.com", "n", "3"]):
+    with patch("builtins.input", side_effect=["quads3.example.com", "https://quads3.example.com", "n", "", "3"]):
         with patch("requests.get") as mock_get:
             mock_get.return_value.status_code = 200
             with patch("builtins.open", mock_open(read_data="servers: {}\n")):
@@ -430,6 +430,7 @@ def test_add_quads_server_with_credentials(mock_shell):
             "quads3.example.com",
             "https://quads3.example.com",
             "y",
+            "",
             "1",
             "user@example.com",
         ],
@@ -464,7 +465,7 @@ def test_add_quads_server_connection_failed_accept(mock_shell):
                 with patch("yaml.dump") as mock_dump:
                     with patch(
                         "builtins.input",
-                        side_effect=["quads3.example.com", "https://quads3.example.com", "y", "3", "y"],
+                        side_effect=["quads3.example.com", "https://quads3.example.com", "y", "", "3", "y"],
                     ):
                         with patch.object(ServerCommands, "cmd_config_reload"):
                             server_cmd = ServerCommands(mock_shell)
@@ -473,3 +474,264 @@ def test_add_quads_server_connection_failed_accept(mock_shell):
                             mock_dump.assert_called_once()
                             call_args = mock_dump.call_args[0][0]
                             assert "quads3.example.com" in call_args["servers"]
+
+
+def test_edit_server_cli_proxy_argument(mock_shell):
+    """Test edit-server accepts a proxy argument"""
+    with patch.object(ServerCommands, "edit_server_programmatic") as mock_edit:
+        mock_edit.return_value = (True, "Server 'quads3' updated successfully")
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_edit_server("quads3 proxy socks5h://127.0.0.1:1080")
+
+    assert mock_edit.call_args.kwargs["proxy"] == "socks5h://127.0.0.1:1080"
+
+
+def test_edit_server_cli_without_proxy_keeps_proxy_none(mock_shell):
+    """Test edit-server leaves the proxy untouched when no proxy token is given"""
+    with patch.object(ServerCommands, "edit_server_programmatic") as mock_edit:
+        mock_edit.return_value = (True, "Server 'quads3' updated successfully")
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_edit_server("quads3 verify false")
+
+    assert mock_edit.call_args.kwargs["proxy"] is None
+
+
+def test_servers_command_without_session_still_probes(mock_shell):
+    """Test 'servers' works before any session exists (shell.connection is None)"""
+    mock_shell.config.get_all_servers.return_value = {
+        "test_server": {"url": "https://test.example.com", "username": "", "password": "", "verify": True}
+    }
+    mock_shell.config.get_default_server.return_value = None
+    mock_shell.config.get_server_url.side_effect = lambda n: "https://test.example.com"
+    mock_shell.config.get_server_verify.side_effect = lambda n: True
+    mock_shell.config.get_server_api_token.side_effect = lambda n: ""
+    mock_shell.config.get_server_proxy.side_effect = lambda n: ""
+    mock_shell.connection = None
+
+    mock_api = MagicMock()
+    mock_api.get_version.return_value = {"version": "2.2.6"}
+    mock_api_class = MagicMock(return_value=mock_api)
+
+    with patch("quads_client.connection.QuadsApi", mock_api_class):
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_servers("")
+
+    # Version must be probed even with no active connection
+    mock_api.get_version.assert_called_once()
+    assert "2.2.6" in str(mock_shell.poutput.call_args_list)
+
+
+def test_edit_server_cli_proxy_none_clears(mock_shell):
+    """Test edit-server ... proxy none clears the proxy (empty string, not the literal 'none')"""
+    with patch.object(ServerCommands, "edit_server_programmatic") as mock_edit:
+        mock_edit.return_value = (True, "Server 'quads3' updated successfully")
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_edit_server("quads3 proxy none")
+
+    assert mock_edit.call_args.kwargs["proxy"] == ""
+
+
+def test_edit_server_cli_proxy_dash_clears(mock_shell):
+    """Test edit-server ... proxy - also clears the proxy"""
+    with patch.object(ServerCommands, "edit_server_programmatic") as mock_edit:
+        mock_edit.return_value = (True, "Server 'quads3' updated successfully")
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_edit_server("quads3 proxy -")
+
+    assert mock_edit.call_args.kwargs["proxy"] == ""
+
+
+def test_proxy_parse_rejects_port_zero():
+    """Test port 0 is rejected as a proxy port"""
+    from quads_client.proxies import ProxyError, parse_proxy
+
+    with pytest.raises(ProxyError, match="host and port"):
+        parse_proxy("socks5://127.0.0.1:0")
+
+
+def test_add_quads_server_wizard_persists_proxy(mock_shell):
+    """Test the add-quads-server wizard stores a proxy and probes through it"""
+    mock_shell.config.config_path = "~/.config/quads/quads-client.yml"
+    yaml_content = {"servers": {}}
+
+    inputs = ["quads3.example.com", "https://quads3.example.com", "y", "socks5h://127.0.0.1:1080", "3"]
+    with patch("builtins.input", side_effect=inputs):
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            with patch("builtins.open", mock_open(read_data="servers: {}\n")):
+                with patch("yaml.safe_load", return_value=yaml_content):
+                    with patch("yaml.dump") as mock_dump:
+                        with patch.object(ServerCommands, "cmd_config_reload"):
+                            server_cmd = ServerCommands(mock_shell)
+                            server_cmd.cmd_add_quads_server("")
+
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["quads3.example.com"]["proxy"] == "socks5h://127.0.0.1:1080"
+    assert mock_get.call_args.kwargs["proxies"] == {
+        "http": "socks5h://127.0.0.1:1080",
+        "https": "socks5h://127.0.0.1:1080",
+    }
+
+
+def test_servers_command_reports_proxy_error(mock_shell):
+    """Test a proxy misconfiguration is surfaced instead of a false 'Offline'"""
+    mock_shell.config.get_all_servers.return_value = {
+        "test_server": {
+            "url": "https://test.example.com",
+            "username": "",
+            "password": "",
+            "verify": True,
+            "proxy": "socks5h://127.0.0.1:1080",
+        }
+    }
+    mock_shell.config.get_default_server.return_value = None
+    mock_shell.config.get_server_url.side_effect = lambda n: "https://test.example.com"
+    mock_shell.config.get_server_verify.side_effect = lambda n: True
+    mock_shell.config.get_server_api_token.side_effect = lambda n: ""
+    mock_shell.config.get_server_proxy.side_effect = lambda n: "socks5h://127.0.0.1:1080"
+    mock_shell.connection = None
+
+    from quads_client.proxies import ProxyError
+
+    mock_api_class = MagicMock(side_effect=ProxyError("The 'PySocks' package is required for 'socks5h' proxies."))
+
+    with patch("quads_client.connection.QuadsApi", mock_api_class):
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_servers("")
+
+    rendered = str(mock_shell.poutput.call_args_list)
+    assert "Proxy error" in rendered
+
+
+def test_servers_command_suppresses_ssl_warning_when_verify_disabled(mock_shell, capsys):
+    """Test verify:false keeps InsecureRequestWarning suppressed in the servers table"""
+    import urllib3
+
+    mock_shell.config.get_all_servers.return_value = {
+        "test_server": {
+            "url": "https://test.example.com",
+            "username": "",
+            "password": "",
+            "verify": False,
+        }
+    }
+    mock_shell.config.get_default_server.return_value = None
+    mock_shell.config.get_server_url.side_effect = lambda n: "https://test.example.com"
+    mock_shell.config.get_server_verify.side_effect = lambda n: False
+    mock_shell.config.get_server_api_token.side_effect = lambda n: ""
+    mock_shell.config.get_server_proxy.side_effect = lambda n: ""
+    mock_shell.connection = None
+
+    def emit_warning():
+        import warnings
+
+        warnings.warn("Unverified HTTPS request is being made", urllib3.exceptions.InsecureRequestWarning)
+
+    mock_api = MagicMock()
+    mock_api.get_version.side_effect = lambda: (emit_warning(), {"version": "2.2.6"})[1]
+    mock_api_class = MagicMock(return_value=mock_api)
+
+    with patch("quads_client.connection.QuadsApi", mock_api_class):
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_servers("")
+
+    captured = capsys.readouterr()
+    assert "InsecureRequestWarning" not in captured.err
+
+
+def test_servers_command_reports_malformed_proxy_as_proxy_error(mock_shell):
+    """Test a malformed proxy URL surfaces as Proxy error (ConfigError path), not Offline"""
+    mock_shell.config.get_all_servers.return_value = {
+        "test_server": {
+            "url": "https://test.example.com",
+            "username": "",
+            "password": "",
+            "verify": True,
+            "proxy": "ftp://127.0.0.1:21",
+        }
+    }
+    mock_shell.config.get_default_server.return_value = None
+    mock_shell.config.get_server_url.side_effect = lambda n: "https://test.example.com"
+    mock_shell.config.get_server_verify.side_effect = lambda n: True
+    mock_shell.config.get_server_api_token.side_effect = lambda n: ""
+    mock_shell.config.get_server_proxy.side_effect = lambda n: "ftp://127.0.0.1:21"
+    mock_shell.connection = None
+
+    from quads_client.config import ConfigError
+
+    mock_api_class = MagicMock(side_effect=ConfigError("proxy is invalid: Unsupported proxy scheme 'ftp'"))
+
+    with patch("quads_client.connection.QuadsApi", mock_api_class):
+        server_cmd = ServerCommands(mock_shell)
+        server_cmd.cmd_servers("")
+
+    rendered = str(mock_shell.poutput.call_args_list)
+    assert "Proxy error" in rendered
+
+
+def test_add_quads_server_wizard_none_means_no_proxy(mock_shell):
+    """Test typing 'none' at the wizard proxy prompt stores no proxy"""
+    mock_shell.config.config_path = "~/.config/quads/quads-client.yml"
+    yaml_content = {"servers": {}}
+
+    inputs = ["quads3.example.com", "https://quads3.example.com", "y", "none", "3"]
+    with patch("builtins.input", side_effect=inputs):
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            with patch("builtins.open", mock_open(read_data="servers: {}\n")):
+                with patch("yaml.safe_load", return_value=yaml_content):
+                    with patch("yaml.dump") as mock_dump:
+                        with patch.object(ServerCommands, "cmd_config_reload"):
+                            server_cmd = ServerCommands(mock_shell)
+                            server_cmd.cmd_add_quads_server("")
+
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["quads3.example.com"]["proxy"] == ""
+
+
+def test_add_quads_server_wizard_rejects_malformed_proxy(mock_shell):
+    """Test the wizard re-prompts on a typo'd proxy instead of storing it"""
+    mock_shell.config.config_path = "~/.config/quads/quads-client.yml"
+    yaml_content = {"servers": {}}
+
+    inputs = [
+        "quads3.example.com",
+        "https://quads3.example.com",
+        "y",
+        "ftp://127.0.0.1:21",  # malformed -> rejected, re-prompt
+        "http://127.0.0.1:3128",  # valid replacement
+        "3",
+    ]
+    with patch("builtins.input", side_effect=inputs):
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            with patch("builtins.open", mock_open(read_data="servers: {}\n")):
+                with patch("yaml.safe_load", return_value=yaml_content):
+                    with patch("yaml.dump") as mock_dump:
+                        with patch.object(ServerCommands, "cmd_config_reload"):
+                            server_cmd = ServerCommands(mock_shell)
+                            server_cmd.cmd_add_quads_server("")
+
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["quads3.example.com"]["proxy"] == "http://127.0.0.1:3128"
+    rendered = str(mock_shell.perror.call_args_list)
+    assert "Invalid proxy" in rendered
+
+
+def test_edit_server_cli_proxy_argument_still_redacts_in_errors(mock_shell):
+    """Test proxy validation failure messages shown by edit-server hide credentials"""
+    mock_shell.config.config_path = "~/.config/quads/quads-client.yml"
+    yaml_content = {
+        "servers": {
+            "quads3": {"url": "https://quads3.example.com", "proxy": "socks5h://alice:sekret@proxy.local:notaport"}
+        }
+    }
+
+    with patch("builtins.open", mock_open(read_data="servers: {}\n")):
+        with patch("yaml.safe_load", return_value=yaml_content):
+            with patch.object(ServerCommands, "cmd_config_reload"):
+                server_cmd = ServerCommands(mock_shell)
+                server_cmd.cmd_edit_server("quads3 proxy socks5h://alice:sekret@proxy.local:9")
+
+    rendered = " ".join(str(c) for c in mock_shell.poutput.call_args_list + mock_shell.perror.call_args_list)
+    assert "sekret" not in rendered

@@ -407,3 +407,165 @@ def test_save_config_write_error(tmp_path):
     finally:
         # Restore permissions for cleanup
         os.chmod(tmp_path, 0o755)
+
+
+def test_get_server_proxy_defaults_to_empty(tmp_path):
+    """Test proxy accessor returns empty string when unset"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(yaml.dump({"servers": {"test_server": {"url": "https://test.example.com"}}}))
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    assert config.get_server_proxy("test_server") == ""
+
+
+def test_get_server_proxy_strips_whitespace(tmp_path):
+    """Test proxy accessor strips surrounding whitespace"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump(
+            {"servers": {"test_server": {"url": "https://test.example.com", "proxy": "  socks5h://127.0.0.1:1080 "}}}
+        )
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    assert config.get_server_proxy("test_server") == "socks5h://127.0.0.1:1080"
+
+
+def test_get_server_proxy_none_sentinel_clears(tmp_path):
+    """Test proxy accessor maps a hand-edited 'proxy: none' to no proxy"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump({"servers": {"test_server": {"url": "https://test.example.com", "proxy": "none"}}})
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    assert config.get_server_proxy("test_server") == ""
+
+
+def test_get_server_proxy_dash_sentinel_clears(tmp_path):
+    """Test proxy accessor maps a hand-edited 'proxy: -' to no proxy"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(yaml.dump({"servers": {"test_server": {"url": "https://test.example.com", "proxy": "-"}}}))
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    assert config.get_server_proxy("test_server") == ""
+
+
+def test_get_server_proxy_rejects_invalid_url(tmp_path):
+    """Test proxy accessor validates the proxy URL"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump({"servers": {"test_server": {"url": "https://test.example.com", "proxy": "ftp://127.0.0.1:21"}}})
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    with pytest.raises(ConfigError, match="Unsupported proxy scheme"):
+        config.get_server_proxy("test_server")
+
+
+def test_get_server_proxy_rejects_non_string(tmp_path):
+    """Test proxy accessor rejects a non-string proxy value"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump({"servers": {"test_server": {"url": "https://test.example.com", "proxy": {"host": "x"}}}})
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    with pytest.raises(ConfigError, match="proxy must be a proxy URL string"):
+        config.get_server_proxy("test_server")
+
+
+def test_proxy_survives_save_config(tmp_path):
+    """Test the proxy key is not dropped by normalization on save"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump(
+            {
+                "servers": {
+                    "test_server": {
+                        "url": "https://test.example.com",
+                        "proxy": "socks5h://127.0.0.1:1080",
+                    }
+                }
+            }
+        )
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    config.save_config()
+
+    with open(config_file, "r") as f:
+        saved_data = yaml.safe_load(f)
+    assert saved_data["servers"]["test_server"]["proxy"] == "socks5h://127.0.0.1:1080"
+
+
+def test_proxy_survives_credential_update(tmp_path):
+    """Test the proxy key survives update_server_credentials normalization"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump(
+            {
+                "servers": {
+                    "test_server": {
+                        "url": "https://test.example.com",
+                        "proxy": "socks5h://127.0.0.1:1080",
+                    }
+                }
+            }
+        )
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    config.update_server_credentials("test_server", "user@example.com", "secret")
+
+    assert config.get_server_proxy("test_server") == "socks5h://127.0.0.1:1080"
+    with open(config_file, "r") as f:
+        saved_data = yaml.safe_load(f)
+    assert saved_data["servers"]["test_server"]["proxy"] == "socks5h://127.0.0.1:1080"
+
+
+def test_proxy_survives_api_token_update(tmp_path):
+    """Test the proxy key survives update_server_api_token normalization"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump(
+            {
+                "servers": {
+                    "test_server": {
+                        "url": "https://test.example.com",
+                        "proxy": "socks5h://127.0.0.1:1080",
+                    }
+                }
+            }
+        )
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    config.update_server_api_token("test_server", "user@example.com", "qat_token")
+
+    assert config.get_server_proxy("test_server") == "socks5h://127.0.0.1:1080"
+
+
+def test_get_server_proxy_error_does_not_leak_credentials(tmp_path):
+    """Test proxy validation errors never echo userinfo credentials"""
+    config_file = tmp_path / "quads-client.yml"
+    config_file.write_text(
+        yaml.dump(
+            {
+                "servers": {
+                    "test_server": {
+                        "url": "https://test.example.com",
+                        "proxy": "socks5h://alice:sekret@proxy.local:notaport",
+                    }
+                }
+            }
+        )
+    )
+
+    config = QuadsClientConfig(config_path=str(config_file))
+    with pytest.raises(ConfigError) as excinfo:
+        config.get_server_proxy("test_server")
+
+    message = str(excinfo.value)
+    assert "sekret" not in message
+    assert "proxy.local" in message

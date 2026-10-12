@@ -3,8 +3,8 @@ import sys
 import jwt
 import urllib3
 from quads_lib import QuadsApi
-from quads_client import http_debug
-from quads_client.config import QuadsClientConfig
+from quads_client.config import ConfigError, QuadsClientConfig
+from quads_client.proxies import ProxyError, apply_proxy_to_session
 
 
 def _init_truststore():
@@ -159,6 +159,28 @@ class ConnectionManager:
 
         return None
 
+    def build_api(self, server_name: str, username: str = "", password: str = "", api_token: str = "") -> QuadsApi:
+        """Build a QuadsApi for a configured server with proxy settings applied.
+
+        Used by connect() and the CLI server commands, so the per-server
+        proxy is honored by both the long-lived connection and ephemeral
+        API calls.
+        """
+        resolved = self._resolve_server_name(server_name)
+        if not resolved:
+            raise ConnectionError(f"Unknown server: {server_name}")
+        # Omit api_token when unset: it defaults to None upstream
+        extra = {"api_token": api_token} if api_token else {}
+        api = QuadsApi(
+            base_url=self.config.get_server_url(resolved),
+            username=username,
+            password=password,
+            verify=self.config.get_server_verify(resolved),
+            **extra,
+        )
+        apply_proxy_to_session(api, self.config.get_server_proxy(resolved))
+        return api
+
     def connect(self, server_name: str, registration_mode: bool = False) -> None:
         """Connect to a server. Automatically enters registration mode if credentials are blank."""
         # Resolve server name with fuzzy matching
@@ -168,10 +190,13 @@ class ConnectionManager:
 
         # Use resolved name for all operations
         server_name = resolved_name
-        url = self.config.get_server_url(server_name)
         username, password = self.config.get_server_credentials(server_name)
         api_token = self.config.get_server_api_token(server_name)
         verify = self.config.get_server_verify(server_name)
+        try:
+            proxy = self.config.get_server_proxy(server_name)
+        except ConfigError as e:
+            raise ConnectionError(f"Failed to connect to {server_name}: {e}")
 
         # Suppress SSL warnings when certificate verification is disabled
         if not verify:
@@ -180,9 +205,7 @@ class ConnectionManager:
         try:
             if api_token:
                 # API token mode: bearer header set in __init__, no login() call needed
-                api = QuadsApi(base_url=url, username="", password="", verify=verify, api_token=api_token)
-                # Trace the connect handshake too when --debug is on (idempotent, no-op when off)
-                http_debug.install(api.session)
+                api = self.build_api(server_name, username="", password="", api_token=api_token)
                 # Verify server is reachable
                 api.get_version()
                 self._api = api
@@ -193,7 +216,7 @@ class ConnectionManager:
                 self._user_role = self._detect_role_from_api()
             elif not username or not password or registration_mode:
                 # Registration mode: connect without login
-                api = QuadsApi(base_url=url, username="", password="", verify=verify)
+                api = self.build_api(server_name, username="", password="")
                 self._api = api
                 self._current_server = server_name
                 self._registration_mode = True
@@ -202,9 +225,7 @@ class ConnectionManager:
                 self._user_role = None
             else:
                 # Normal mode: connect and login
-                api = QuadsApi(base_url=url, username=username, password=password, verify=verify)
-                # Trace the connect handshake too when --debug is on (idempotent, no-op when off)
-                http_debug.install(api.session)
+                api = self.build_api(server_name, username=username, password=password)
                 response = api.login()
 
                 if response.get("status") != "success":
@@ -219,11 +240,11 @@ class ConnectionManager:
                 # Try to decode role from token
                 self._user_role = self._decode_role_from_token()
 
-            # Catch-all for the registration path (no handshake above); idempotent elsewhere
-            http_debug.install(self._api.session)
-
         except Exception as e:
             # Provide user-friendly error messages
+            if isinstance(e, (ProxyError, ConfigError)):
+                raise ConnectionError(f"Failed to connect to {server_name}: {e}")
+
             error_str = str(e).lower()
 
             # Check more specific errors first, then generic ones
@@ -236,6 +257,15 @@ class ConnectionManager:
                 raise ConnectionError(
                     f"Failed to connect to {server_name}: SSL certificate verification failed. "
                     f"Use 'edit-server {server_name} verify false' to disable verification for testing."
+                )
+            elif "proxy" in error_str or ("socks" in error_str and proxy):
+                # A dead tunnel and a target that refuses the connection read the
+                # same way here (urllib3 SOCKS wording never says "proxy"), so both
+                # causes are named rather than blaming a working proxy URL.
+                raise ConnectionError(
+                    f"Failed to connect to {server_name}: The configured proxy could not be reached, "
+                    f"or the server refused the connection through it. "
+                    f"Check the proxy URL with 'edit-server {server_name} proxy <url>'."
                 )
             elif "unauthorized" in error_str or "401" in error_str or "403" in error_str or "forbidden" in error_str:
                 raise ConnectionError(

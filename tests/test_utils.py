@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from quads_client.utils import (
     AVAILABLE_HOSTS_BASE_FILTER,
     extract_assignment_id,
@@ -613,3 +613,85 @@ def test_response_error_valid():
 def test_response_error_valid_no_required_keys():
     """A plain success dict with no required keys returns None"""
     assert response_error({"id": 1}) is None
+
+
+class TestFetchServerVersion:
+    """Tests for the shared QUADS version probe used by CLI and GUI reachability checks."""
+
+    def _response(self, status_code=200, payload=None, json_error=False):
+        response = MagicMock()
+        response.status_code = status_code
+        if json_error:
+            response.json.side_effect = ValueError("no json")
+        else:
+            response.json.return_value = payload
+        return response
+
+    def test_returns_status_and_dict_version(self):
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", return_value=self._response(payload={"version": "2.2.6"})) as mock_get:
+            assert fetch_server_version("https://quads.example.com", True) == (200, "2.2.6")
+
+        assert mock_get.call_args.args[0] == "https://quads.example.com/api/v3/version"
+        assert mock_get.call_args.kwargs["verify"] is True
+        assert mock_get.call_args.kwargs["timeout"] == 5
+
+    def test_parses_banner_string_version(self):
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", return_value=self._response(payload="QUADS version 2.2.6 maximilian")):
+            assert fetch_server_version("https://quads.example.com", True) == (200, "2.2.6")
+
+    def test_unknown_version_reported_as_none(self):
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", return_value=self._response(payload={"version": "unknown"})):
+            assert fetch_server_version("https://quads.example.com", True) == (200, None)
+
+    def test_non_json_body_reported_as_none(self):
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", return_value=self._response(json_error=True)):
+            assert fetch_server_version("https://quads.example.com", True) == (200, None)
+
+    def test_auth_required_status_has_no_version(self):
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", return_value=self._response(status_code=401, payload={"message": "auth"})):
+            assert fetch_server_version("https://quads.example.com", True) == (401, None)
+
+    def test_proxy_routed_through_requests(self):
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", return_value=self._response(payload={"version": "2.2.6"})) as mock_get:
+            fetch_server_version("https://quads.example.com", False, "socks5h://127.0.0.1:1080")
+
+        assert mock_get.call_args.kwargs["proxies"] == {
+            "http": "socks5h://127.0.0.1:1080",
+            "https": "socks5h://127.0.0.1:1080",
+        }
+
+    def test_no_proxy_leaves_environment_honored(self):
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", return_value=self._response(payload={"version": "2.2.6"})) as mock_get:
+            fetch_server_version("https://quads.example.com", True, "")
+
+        assert mock_get.call_args.kwargs["proxies"] is None
+
+    def test_invalid_proxy_raises_proxy_error(self):
+        from quads_client.proxies import ProxyError
+        from quads_client.utils import fetch_server_version
+
+        with pytest.raises(ProxyError):
+            fetch_server_version("https://quads.example.com", True, "ftp://proxy.example.com:21")
+
+    def test_transport_error_propagates(self):
+        import requests
+
+        from quads_client.utils import fetch_server_version
+
+        with patch("requests.get", side_effect=requests.ConnectionError("boom")):
+            with pytest.raises(requests.ConnectionError):
+                fetch_server_version("https://quads.example.com", True)
