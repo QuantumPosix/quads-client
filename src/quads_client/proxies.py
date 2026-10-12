@@ -21,11 +21,10 @@ class ProxyError(Exception):
 
 def redact_proxy(proxy: str) -> str:
     """Proxy URL with any userinfo credentials stripped, for error messages."""
-    parts = urlsplit(proxy)
-    host = parts.netloc.rpartition("@")[2]
-    if not host:
-        return proxy
-    return f"{parts.scheme}://{host}"
+    scheme, sep, rest = proxy.partition("//")
+    authority = rest if sep else proxy
+    host = authority.rsplit("@", 1)[-1]
+    return f"{scheme}//{host}" if sep else host
 
 
 def normalize_proxy(proxy: str) -> str:
@@ -93,9 +92,11 @@ def apply_proxy_to_session(api, proxy: str) -> None:
         # A configured proxy is authoritative: without this, requests
         # would silently let *_proxy environment variables win.
         api.session.trust_env = False
-        # trust_env also gates REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE, so carry
-        # the environment CA bundle over when verification is enabled.
+        # trust_env also gates REQUESTS_CA_BUNDLE/CURL_CA_BUNDLE for session-level
+        # requests, but quads-lib passes verify=self.verify on every request, which
+        # overrides session.verify. Set the api-level verify that quads-lib reads so
+        # the environment CA bundle still reaches the wire.
         ca_bundle = os.environ.get("REQUESTS_CA_BUNDLE") or os.environ.get("CURL_CA_BUNDLE")
         if ca_bundle and getattr(api, "verify", None) is True:
-            api.session.verify = ca_bundle
+            api.verify = ca_bundle
     http_debug.install(api.session)

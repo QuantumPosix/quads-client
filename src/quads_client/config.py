@@ -95,14 +95,14 @@ class QuadsClientConfig:
         return verify
 
     def get_server_proxy(self, name: str) -> str:
+        from quads_client.proxies import ProxyError, normalize_proxy, parse_proxy
+
         server = self.get_server(name)
         proxy = server.get("proxy", "") or ""
         if not isinstance(proxy, str):
             raise ConfigError(f"Server '{name}' proxy must be a proxy URL string, e.g. socks5h://127.0.0.1:1080")
-        proxy = proxy.strip()
+        proxy = normalize_proxy(proxy)
         if proxy:
-            from quads_client.proxies import ProxyError, parse_proxy
-
             try:
                 parse_proxy(proxy)
             except ProxyError as e:
