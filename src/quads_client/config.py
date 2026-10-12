@@ -24,6 +24,7 @@ class QuadsClientConfig:
             "password": server.get("password", ""),
             "api_token": server.get("api_token", ""),
             "verify": server.get("verify", True),
+            "proxy": server.get("proxy", ""),
         }
 
     def _load_config(self):
@@ -92,6 +93,21 @@ class QuadsClientConfig:
         if not isinstance(verify, bool):
             raise ConfigError(f"Server '{name}' verify must be true or false, not a path")
         return verify
+
+    def get_server_proxy(self, name: str) -> str:
+        server = self.get_server(name)
+        proxy = server.get("proxy", "") or ""
+        if not isinstance(proxy, str):
+            raise ConfigError(f"Server '{name}' proxy must be a proxy URL string, e.g. socks5h://127.0.0.1:1080")
+        proxy = proxy.strip()
+        if proxy:
+            from quads_client.proxies import ProxyError, parse_proxy
+
+            try:
+                parse_proxy(proxy)
+            except ProxyError as e:
+                raise ConfigError(f"Server '{name}' proxy is invalid: {e}")
+        return proxy
 
     def get_server_api_token(self, name: str) -> str:
         server = self.get_server(name)

@@ -193,6 +193,7 @@ class TestUserCommandsProgrammatic:
         shell.config.config_path = "/tmp/test_config.yml"
         shell.config.get_server_url.return_value = "https://test.example.com"
         shell.config.get_server_verify.return_value = True
+        shell.config.get_server_proxy.return_value = ""
 
         # Mock connection
         mock_connection = MagicMock()
@@ -293,6 +294,7 @@ class TestUserCommandsRegister:
         shell.config.config_path = "/tmp/test_config.yml"
         shell.config.get_server_url.return_value = "https://test.example.com"
         shell.config.get_server_verify.return_value = True
+        shell.config.get_server_proxy.return_value = ""
 
         mock_connection = MagicMock()
         mock_connection.is_connected = True
@@ -417,3 +419,280 @@ class TestGuiShellMetadataCache:
 
         gui_shell.get_available_models()
         assert gui_shell.connection.api.get_hosts.call_count == 2
+
+
+@pytest.fixture
+def server_commands(mock_shell):
+    """Create ServerCommands instance with the module mock shell"""
+    from quads_client.commands.server import ServerCommands
+
+    return ServerCommands(mock_shell)
+
+
+@pytest.fixture
+def mock_shell():
+    """Create mock shell for server command tests"""
+    shell = MagicMock()
+    shell.config = MagicMock()
+    shell.config.config_path = "/tmp/test_config.yml"
+    shell.config.get_all_servers.return_value = {}
+    shell.poutput = MagicMock()
+    shell.perror = MagicMock()
+    shell.pwarning = MagicMock()
+    return shell
+
+
+def test_add_server_programmatic_persists_proxy(server_commands, mock_shell):
+    """Test adding a server with a proxy URL writes it to the config"""
+    mock_config_data = {"servers": {}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch("requests.get") as mock_get:
+                    mock_get.return_value.status_code = 200
+                    mock_get.return_value.json.return_value = {"version": "2.2.6"}
+                    # Keep the reload off the real ~/.config path (fresh CI runners have none)
+                    with patch.object(server_commands, "cmd_config_reload"):
+                        success, message, version = server_commands.add_server_programmatic(
+                            name="test-server",
+                            url="https://test.example.com",
+                            proxy="socks5h://127.0.0.1:1080",
+                            test_connection=True,
+                        )
+
+    assert success is True
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["test-server"]["proxy"] == "socks5h://127.0.0.1:1080"
+    assert mock_get.call_args.kwargs["proxies"] == {
+        "http": "socks5h://127.0.0.1:1080",
+        "https": "socks5h://127.0.0.1:1080",
+    }
+
+
+def test_add_server_programmatic_without_proxy_probes_directly(server_commands, mock_shell):
+    """Test the reachability probe stays direct when no proxy is configured"""
+    mock_config_data = {"servers": {}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump"):
+                with patch("requests.get") as mock_get:
+                    mock_get.return_value.status_code = 200
+                    mock_get.return_value.json.return_value = {"version": "2.2.6"}
+                    with patch.object(server_commands, "cmd_config_reload"):
+                        server_commands.add_server_programmatic(
+                            name="test-server", url="https://test.example.com", test_connection=True
+                        )
+
+    assert mock_get.call_args.kwargs["proxies"] is None
+
+
+def test_edit_server_programmatic_sets_proxy(server_commands, mock_shell):
+    """Test edit_server_programmatic stores a new proxy URL"""
+    mock_config_data = {"servers": {"test-server": {"url": "https://test.example.com", "verify": True}}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message = server_commands.edit_server_programmatic(
+                        "test-server", proxy="socks5h://127.0.0.1:1080"
+                    )
+
+    assert success is True
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["test-server"]["proxy"] == "socks5h://127.0.0.1:1080"
+
+
+def test_edit_server_programmatic_clears_proxy(server_commands, mock_shell):
+    """Test an empty proxy string disables the proxy (None leaves it unchanged)"""
+    mock_config_data = {
+        "servers": {"test-server": {"url": "https://test.example.com", "proxy": "socks5h://127.0.0.1:1080"}}
+    }
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message = server_commands.edit_server_programmatic("test-server", proxy="")
+
+    assert success is True
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["test-server"]["proxy"] == ""
+
+
+def test_edit_server_programmatic_none_leaves_proxy(server_commands, mock_shell):
+    """Test proxy=None does not touch an existing proxy setting"""
+    mock_config_data = {
+        "servers": {"test-server": {"url": "https://test.example.com", "proxy": "socks5h://127.0.0.1:1080"}}
+    }
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message = server_commands.edit_server_programmatic(
+                        "test-server", verify=False, proxy=None
+                    )
+
+    assert success is True
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["test-server"]["proxy"] == "socks5h://127.0.0.1:1080"
+
+
+def test_edit_server_programmatic_none_sentinel_clears_proxy(server_commands, mock_shell):
+    """Test the GUI 'none' sentinel clears the proxy just like edit-server proxy none"""
+    mock_config_data = {
+        "servers": {"test-server": {"url": "https://test.example.com", "proxy": "socks5h://127.0.0.1:1080"}}
+    }
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message = server_commands.edit_server_programmatic("test-server", proxy="none")
+
+    assert success is True
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["test-server"]["proxy"] == ""
+
+
+def test_edit_server_programmatic_rejects_malformed_proxy(server_commands, mock_shell):
+    """Test a typo'd proxy fails at edit time and leaves the stored proxy untouched"""
+    mock_config_data = {
+        "servers": {"test-server": {"url": "https://test.example.com", "proxy": "socks5h://127.0.0.1:1080"}}
+    }
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message = server_commands.edit_server_programmatic(
+                        "test-server", proxy="socks://127.0.0.1:1080"
+                    )
+
+    assert success is False
+    assert "Unsupported proxy scheme 'socks'" in message
+    mock_dump.assert_not_called()
+    assert mock_config_data["servers"]["test-server"]["proxy"] == "socks5h://127.0.0.1:1080"
+
+
+def test_edit_server_programmatic_proxy_error_hides_credentials(server_commands, mock_shell):
+    """Test the malformed proxy message redacts userinfo credentials"""
+    mock_config_data = {"servers": {"test-server": {"url": "https://test.example.com"}}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message = server_commands.edit_server_programmatic(
+                        "test-server", proxy="socks5h://alice:sekret@proxy.local:notaport"
+                    )
+
+    assert success is False
+    assert "sekret" not in message
+    assert "proxy.local:notaport" in message
+    mock_dump.assert_not_called()
+
+
+def test_add_server_programmatic_none_sentinel_stores_empty_proxy(server_commands, mock_shell):
+    """Test the GUI 'none' sentinel is normalized to an empty proxy on add (no probe)"""
+    mock_config_data = {"servers": {}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message, version = server_commands.add_server_programmatic(
+                        name="test-server",
+                        url="https://test.example.com",
+                        proxy="none",
+                        test_connection=False,
+                    )
+
+    assert success is True
+    written = mock_dump.call_args[0][0]
+    assert written["servers"]["test-server"]["proxy"] == ""
+
+
+def test_add_server_programmatic_rejects_malformed_proxy_without_probe(server_commands, mock_shell):
+    """Test a malformed proxy is rejected on add even when the reachability probe is off"""
+    mock_config_data = {"servers": {}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch.object(server_commands, "cmd_config_reload"):
+                    success, message, version = server_commands.add_server_programmatic(
+                        name="test-server",
+                        url="https://test.example.com",
+                        proxy="ftp://127.0.0.1:21",
+                        test_connection=False,
+                    )
+
+    assert success is False
+    assert "Unsupported proxy scheme 'ftp'" in message
+    mock_dump.assert_not_called()
+
+
+def test_add_server_programmatic_malformed_proxy_is_not_a_connection_failure(server_commands, mock_shell):
+    """Test a bad proxy is reported as a proxy error, so the GUI does not offer 'add anyway'"""
+    mock_config_data = {"servers": {}}
+
+    with patch("builtins.open", mock_open(read_data=yaml.dump(mock_config_data))):
+        with patch("yaml.safe_load", return_value=mock_config_data):
+            with patch("yaml.dump") as mock_dump:
+                with patch("requests.get") as mock_get:
+                    with patch.object(server_commands, "cmd_config_reload"):
+                        success, message, version = server_commands.add_server_programmatic(
+                            name="test-server",
+                            url="https://test.example.com",
+                            proxy="ftp://127.0.0.1:21",
+                            test_connection=True,
+                        )
+
+    assert success is False
+    assert "Unsupported proxy scheme 'ftp'" in message
+    assert "Could not connect" not in message
+    mock_get.assert_not_called()
+    mock_dump.assert_not_called()
+
+
+def test_login_programmatic_applies_proxy(mock_shell):
+    """Test login_programmatic routes the new API session through the configured proxy"""
+    from requests import Session
+
+    mock_shell.config.get_server_proxy.return_value = "socks5h://127.0.0.1:1080"
+    mock_api = MagicMock()
+    mock_api.session = Session()
+    mock_api.login.return_value = {"auth_token": "tok", "status": "success"}
+    mock_api.token = "tok"
+
+    from quads_client.commands.user import UserCommands
+
+    user_cmd = UserCommands(mock_shell)
+    with patch("quads_lib.QuadsApi", return_value=mock_api):
+        success, message, role = user_cmd.login_programmatic("a@example.com", "pw")
+
+    assert success is True
+    assert mock_api.session.proxies["https"] == "socks5h://127.0.0.1:1080"
+
+
+def test_token_login_programmatic_applies_proxy(mock_shell):
+    """Test token_login_programmatic routes the new API session through the configured proxy"""
+    from requests import Session
+
+    mock_shell.config.get_server_proxy.return_value = "socks5h://127.0.0.1:1080"
+    mock_api = MagicMock()
+    mock_api.session = Session()
+    mock_api.get_version.return_value = {"version": "2.2.6"}
+
+    from quads_client.commands.user import UserCommands
+
+    user_cmd = UserCommands(mock_shell)
+    with patch("quads_lib.QuadsApi", return_value=mock_api):
+        success, message, role = user_cmd.token_login_programmatic("a@example.com", "qat_token_123")
+
+    assert success is True
+    assert mock_api.session.proxies["https"] == "socks5h://127.0.0.1:1080"

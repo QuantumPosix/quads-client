@@ -1,5 +1,7 @@
 import pytest
 from unittest.mock import MagicMock, patch
+
+from requests import Session
 from quads_client.connection import ConnectionManager, ConnectionError
 
 
@@ -443,3 +445,175 @@ def test_init_truststore_skipped_on_linux():
 
     with patch("sys.platform", "linux"):
         conn_module._init_truststore()
+
+
+def test_connection_applies_proxy_to_session(mock_config, mock_api):
+    """Test the per-server proxy is applied to the API session"""
+    mock_api.session = Session()
+    mock_config.get_server_proxy.return_value = "socks5h://127.0.0.1:1080"
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api):
+        conn = ConnectionManager(mock_config)
+        conn.connect("test_server")
+
+    assert mock_api.session.proxies == {
+        "http": "socks5h://127.0.0.1:1080",
+        "https": "socks5h://127.0.0.1:1080",
+    }
+
+
+def test_connection_applies_proxy_in_registration_mode(mock_config, mock_api):
+    """Test the proxy is applied on the registration-mode path too"""
+    mock_api.session = Session()
+    mock_config.get_server_credentials.return_value = ("", "")
+    mock_config.get_server_proxy.return_value = "socks5h://127.0.0.1:1080"
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api):
+        conn = ConnectionManager(mock_config)
+        conn.connect("test_server")
+
+    assert conn.registration_mode
+    assert mock_api.session.proxies["https"] == "socks5h://127.0.0.1:1080"
+
+
+def test_connection_no_proxy_leaves_session_env_aware(mock_config, mock_api):
+    """Test an unset proxy leaves requests free to use environment proxies"""
+    mock_api.session = Session()
+    mock_config.get_server_proxy.return_value = ""
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api):
+        conn = ConnectionManager(mock_config)
+        conn.connect("test_server")
+
+    assert mock_api.session.proxies == {}
+    assert mock_api.session.trust_env is True
+
+
+def test_connection_invalid_proxy_reports_config_error(mock_config):
+    """Test an invalid proxy URL fails the connect with a clear message"""
+    mock_config.get_server_proxy.return_value = "ftp://proxy.example.com:21"
+
+    with pytest.raises(ConnectionError, match="Unsupported proxy scheme"):
+        conn = ConnectionManager(mock_config)
+        conn.connect("test_server")
+
+
+def test_connection_missing_pysocks_reports_clear_error(mock_config):
+    """Test a SOCKS proxy without PySocks fails the connect with an install hint"""
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "socks":
+            raise ImportError("no module named socks")
+        return real_import(name, *args, **kwargs)
+
+    mock_config.get_server_proxy.return_value = "socks5h://127.0.0.1:1080"
+
+    with patch("quads_client.connection.QuadsApi"):
+        with patch("builtins.__import__", side_effect=fake_import):
+            conn = ConnectionManager(mock_config)
+            with pytest.raises(ConnectionError, match="PySocks"):
+                conn.connect("test_server")
+
+
+def test_build_api_uses_configured_proxy(mock_config, mock_api):
+    """Test build_api applies the proxy for ephemeral API clients"""
+    mock_api.session = Session()
+    mock_config.get_server_proxy.return_value = "http://proxy.example.com:3128"
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api):
+        conn = ConnectionManager(mock_config)
+        api = conn.build_api("test_server", username="u", password="p")
+
+    assert api is mock_api
+    assert api.session.proxies == {"http": "http://proxy.example.com:3128", "https": "http://proxy.example.com:3128"}
+
+
+def test_build_api_unknown_server(mock_config):
+    """Test build_api rejects unknown servers"""
+    conn = ConnectionManager(mock_config)
+    with pytest.raises(ConnectionError, match="Unknown server"):
+        conn.build_api("nonexistent_server")
+
+
+def test_build_api_passes_api_token(mock_config, mock_api):
+    """Test build_api forwards an API token to QuadsApi"""
+    mock_api.session = Session()
+    mock_config.get_server_api_token.return_value = "qat_token_abc"
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api) as mock_cls:
+        conn = ConnectionManager(mock_config)
+        conn.build_api("test_server", username="", password="", api_token="qat_token_abc")
+
+    assert mock_cls.call_args.kwargs["api_token"] == "qat_token_abc"
+
+
+def test_build_api_omits_empty_api_token(mock_config, mock_api):
+    """Test build_api omits api_token when unset so quads_lib keeps its default"""
+    mock_api.session = Session()
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api) as mock_cls:
+        conn = ConnectionManager(mock_config)
+        conn.build_api("test_server", username="u", password="p")
+
+    assert "api_token" not in mock_cls.call_args.kwargs
+
+
+def test_connection_unreachable_proxy_reports_proxy_error(mock_config, mock_api):
+    """Test a failing proxy connection is reported as a proxy problem"""
+    mock_api.session = Session()
+    mock_api.login.side_effect = Exception("SOCKSHTTPSConnectionPool: Unable to connect to proxy")
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api):
+        conn = ConnectionManager(mock_config)
+        with pytest.raises(ConnectionError, match="proxy could not be reached"):
+            conn.connect("test_server")
+
+
+def test_connection_invalid_proxy_scheme_reports_clean_error(mock_config):
+    """Test an invalid proxy scheme produces a targeted error, not the generic fallback"""
+    mock_config.get_server_proxy.return_value = "ftp://127.0.0.1:21"
+
+    with pytest.raises(ConnectionError, match="Unsupported proxy scheme"):
+        conn = ConnectionManager(mock_config)
+        conn.connect("test_server")
+
+
+def test_connection_dead_socks_proxy_reports_proxy_error(mock_config, mock_api):
+    """Test a dead SOCKS tunnel (urllib3 wording has no 'proxy' text) is reported as a proxy problem"""
+    mock_api.session = Session()
+    mock_api.login.side_effect = Exception(
+        "SOCKSHTTPSConnectionPool(host='q.example.com', port=443): Max retries exceeded "
+        '(Caused by NewConnectionError("Failed to establish a new connection: [Errno 111] Connection refused"))'
+    )
+    mock_config.get_server_proxy.return_value = "socks5h://127.0.0.1:1080"
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api):
+        conn = ConnectionManager(mock_config)
+        with pytest.raises(ConnectionError, match="proxy could not be reached"):
+            conn.connect("test_server")
+
+
+def test_connection_direct_failure_without_proxy_keeps_server_message(mock_config, mock_api):
+    """Test a direct connection failure is still reported as the server being unreachable"""
+    mock_api.session = Session()
+    mock_api.login.side_effect = Exception("HTTPSConnectionPool: Connection refused")
+    mock_config.get_server_proxy.return_value = ""
+
+    with patch("quads_client.connection.QuadsApi", return_value=mock_api):
+        conn = ConnectionManager(mock_config)
+        with pytest.raises(ConnectionError, match="Server is unreachable"):
+            conn.connect("test_server")
+
+
+def test_connection_malformed_proxy_raises_connection_error(mock_config):
+    """Test an invalid proxy URL surfaces as ConnectionError from connect(), not ConfigError"""
+    from quads_client.config import ConfigError
+
+    mock_config.get_server_proxy.side_effect = ConfigError("proxy is invalid: Unsupported proxy scheme 'ftp'")
+
+    conn = ConnectionManager(mock_config)
+    with pytest.raises(ConnectionError, match="Unsupported proxy scheme"):
+        conn.connect("test_server")

@@ -2,7 +2,10 @@ from tabulate import tabulate
 import yaml
 from pathlib import Path
 
-from quads_client.utils import get_ssl_status_text
+from quads_client.config import ConfigError
+from quads_client.connection import ConnectionManager
+from quads_client.proxies import ProxyError, normalize_proxy, parse_proxy
+from quads_client.utils import fetch_server_version, get_ssl_status_text
 
 
 class ServerCommands:
@@ -32,7 +35,7 @@ class ServerCommands:
             url = server_config.get("url", "")
             verify = server_config.get("verify", True)
             # Get both status/version and info in one call to avoid double connection overhead
-            status, version, info = self._get_server_info_combined(name, url, server_config)
+            status, version, info = self._get_server_info_combined(name, server_config)
 
             is_default = "✓" if name == default else ""
             is_connected = "Connected" if name == current else status
@@ -53,11 +56,14 @@ class ServerCommands:
                 short_current = self._shorten_server_name(current)
                 self.shell.poutput(f"\nCurrent connection: {short_current}")
 
-    def _get_server_info_combined(self, name, url, server_config):
+    def _get_server_info_combined(self, name, server_config):
         """Get server status, version, and capacity. Version check requires no auth (public endpoint)."""
         try:
-            from quads_lib import QuadsApi
             import urllib3
+
+            # 'servers' is usable before any session exists, so build a
+            # throwaway manager when there is no active connection.
+            connection = self.shell.connection or ConnectionManager(self.shell.config)
 
             username = server_config.get("username", "")
             password = server_config.get("password", "")
@@ -71,7 +77,7 @@ class ServerCommands:
             version = "unknown"
             try:
                 # Create API instance without credentials for public version check
-                api_public = QuadsApi(base_url=url, username="", password="", verify=verify)
+                api_public = connection.build_api(name, username="", password="")
                 version_info = api_public.get_version()
 
                 if isinstance(version_info, dict):
@@ -88,6 +94,9 @@ class ServerCommands:
                         version = version_match.group(1)
                     else:
                         version = version_info if version_info else "unknown"
+            except (ConfigError, ProxyError):
+                # Proxy misconfiguration (bad URL, or PySocks missing)
+                return "Proxy error", "N/A", "N/A"
             except Exception:
                 # Version check failed - server offline or unreachable
                 return "Offline", "N/A", "N/A"
@@ -104,9 +113,9 @@ class ServerCommands:
             # Try authenticated API calls for capacity
             try:
                 if api_token:
-                    api = QuadsApi(base_url=url, username="", password="", verify=verify, api_token=api_token)
+                    api = connection.build_api(name, username="", password="", api_token=api_token)
                 else:
-                    api = QuadsApi(base_url=url, username=username, password=password, verify=verify)
+                    api = connection.build_api(name, username=username, password=password)
                     login_result = api.login()
                     if not login_result or login_result.get("status") == "failure":
                         return "Auth failed", version, "N/A"
@@ -134,6 +143,8 @@ class ServerCommands:
                 # Auth failed but server is online
                 return "Auth failed", version, "N/A"
 
+        except (ConfigError, ProxyError):
+            return "Proxy error", "N/A", "N/A"
         except Exception:
             return "Offline", "N/A", "N/A"
 
@@ -183,6 +194,9 @@ class ServerCommands:
         verify_input = input("Enable SSL certificate verification? [Y/n]: ").strip().lower()
         verify = verify_input != "n"
 
+        # Optional per-server proxy for proxy-only environments
+        proxy = normalize_proxy(input("Proxy URL [none] (e.g. socks5h://127.0.0.1:1080): "))
+
         # Authentication method
         import getpass
 
@@ -212,19 +226,12 @@ class ServerCommands:
         # Test connection (without credentials - just check if server is reachable)
         self.shell.poutput(f"\nTesting connection to {server_url}...")
         try:
-            import requests
-            import urllib3
-
-            # Suppress SSL warnings when certificate verification is disabled
-            if not verify:
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-            response = requests.get(f"{server_url}/api/v3/version", verify=verify, timeout=5)
-            if response.status_code in [200, 401, 403]:
+            status_code, _version = fetch_server_version(server_url, verify, proxy)
+            if status_code in (200, 401, 403):
                 # 200 = success, 401/403 = needs auth (but server is reachable)
                 self.shell.poutput("Server is reachable")
             else:
-                self.shell.pwarning(f"Server returned status code: {response.status_code}")
+                self.shell.pwarning(f"Server returned status code: {status_code}")
         except Exception as e:
             self.shell.pwarning(f"Could not connect to server: {e}")
             response = input("Add server anyway? [y/N]: ")
@@ -240,6 +247,7 @@ class ServerCommands:
             "password": password,
             "api_token": api_token,
             "verify": verify,
+            "proxy": proxy,
         }
 
         if is_first_server:
@@ -271,7 +279,9 @@ class ServerCommands:
         except Exception as e:
             self.shell.perror(f"Failed to save configuration: {e}")
 
-    def add_server_programmatic(self, name, url, username="", password="", verify=True, test_connection=True):
+    def add_server_programmatic(
+        self, name, url, username="", password="", verify=True, proxy="", test_connection=True
+    ):
         """
         Non-interactive server add for GUI and scripting.
 
@@ -281,6 +291,7 @@ class ServerCommands:
             username: Username (optional, empty string for registration mode)
             password: Password (optional, empty string for registration mode)
             verify: Enable SSL verification (default: True)
+            proxy: Proxy URL for outbound connections (optional, e.g. socks5h://127.0.0.1:1080)
             test_connection: Test connection before adding (default: True)
 
         Returns:
@@ -288,6 +299,16 @@ class ServerCommands:
         """
         if not self.shell.config:
             return (False, "Configuration not loaded", None)
+
+        # Normalize the documented 'none'/'-' sentinel and reject typo'd proxies
+        # up front, so a bad value is never stored (and is not reported as a
+        # connection failure, which the GUI would offer to override).
+        proxy = normalize_proxy(proxy)
+        if proxy:
+            try:
+                parse_proxy(proxy)
+            except ProxyError as e:
+                return (False, f"Invalid proxy: {e}", None)
 
         # Ensure URL starts with http:// or https://
         if not url.startswith(("http://", "https://")):
@@ -310,22 +331,11 @@ class ServerCommands:
         version_info = None
         if test_connection:
             try:
-                import requests
-                import urllib3
-
-                # Suppress SSL warnings when certificate verification is disabled
-                if not verify:
-                    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-                response = requests.get(f"{url}/api/v3/version", verify=verify, timeout=5)
-                if response.status_code == 200:
-                    try:
-                        version_data = response.json()
-                        version_info = version_data.get("version", "unknown")
-                    except Exception:
-                        version_info = "unknown"
-                elif response.status_code not in [401, 403]:
-                    return (False, f"Server returned status code: {response.status_code}", None)
+                status_code, probed_version = fetch_server_version(url, verify, proxy)
+                if status_code == 200:
+                    version_info = probed_version or "unknown"
+                elif status_code not in (401, 403):
+                    return (False, f"Server returned status code: {status_code}", None)
             except Exception as e:
                 return (False, f"Could not connect to server: {e}", None)
 
@@ -337,6 +347,7 @@ class ServerCommands:
             "password": password,
             "api_token": "",
             "verify": verify,
+            "proxy": proxy,
         }
 
         # First server added becomes the default
@@ -355,7 +366,9 @@ class ServerCommands:
         except Exception as e:
             return (False, f"Failed to save configuration: {e}", None)
 
-    def edit_server_programmatic(self, name, url=None, username=None, password=None, verify=None, api_token=None):
+    def edit_server_programmatic(
+        self, name, url=None, username=None, password=None, verify=None, proxy=None, api_token=None
+    ):
         """
         Non-interactive server edit for GUI and scripting.
 
@@ -365,6 +378,7 @@ class ServerCommands:
             username: New username (optional, None = no change)
             password: New password (optional, None = no change)
             verify: New SSL verification setting (optional, None = no change)
+            proxy: New proxy URL (optional, None = no change, empty string = disable proxy)
             api_token: New API token (optional, None = no change)
 
         Returns:
@@ -396,6 +410,15 @@ class ServerCommands:
                 server["password"] = ""
             if verify is not None:
                 server["verify"] = verify
+            if proxy is not None:
+                # 'none'/'-' (and blanks) clear the proxy; anything else must be usable
+                proxy = normalize_proxy(proxy)
+                if proxy:
+                    try:
+                        parse_proxy(proxy)
+                    except ProxyError as e:
+                        return (False, f"Invalid proxy: {e}")
+                server["proxy"] = proxy
 
             config_data["servers"][name] = server
 
@@ -479,12 +502,15 @@ class ServerCommands:
 
     def cmd_edit_server(self, args):
         """Edit an existing server.
-        Usage: edit-server <name> [url URL] [username USER] [password PASS] [token TOKEN] [verify true|false]
+
+        Usage: edit-server <name> [url URL] [username USER] [password PASS] [token TOKEN]
+        [verify true|false] [proxy URL]
         """
         parts = args.split()
         if len(parts) < 1:
             self.shell.perror(
-                "Usage: edit-server <name> [url URL] [username USER] [password PASS] [token TOKEN] [verify true|false]"
+                "Usage: edit-server <name> [url URL] [username USER] [password PASS] [token TOKEN] "
+                "[verify true|false] [proxy URL]"
             )
             return
 
@@ -509,6 +535,10 @@ class ServerCommands:
             elif parts[i] == "verify" and i + 1 < len(parts):
                 updates["verify"] = parts[i + 1].lower() == "true"
                 i += 2
+            elif parts[i] == "proxy" and i + 1 < len(parts):
+                # Accept 'none' (or '-') as the documented way to clear the proxy
+                updates["proxy"] = normalize_proxy(parts[i + 1])
+                i += 2
             else:
                 i += 1
 
@@ -523,6 +553,7 @@ class ServerCommands:
             username=updates.get("username"),
             password=updates.get("password"),
             verify=updates.get("verify"),
+            proxy=updates.get("proxy"),
             api_token=updates.get("api_token"),
         )
 

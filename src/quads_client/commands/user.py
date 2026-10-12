@@ -128,12 +128,16 @@ class UserCommands:
             # Get current connection details
             from quads_lib import QuadsApi
 
+            from quads_client.proxies import apply_proxy_to_session
+
             server_name = self.shell.connection.current_server
             url = self.shell.config.get_server_url(server_name)
             verify = self.shell.config.get_server_verify(server_name)
+            proxy = self.shell.config.get_server_proxy(server_name)
 
             # Create new API instance with credentials (quads-lib uses credentials from __init__)
             api = QuadsApi(base_url=url, username=email, password=password, verify=verify)
+            apply_proxy_to_session(api, proxy)
             result = api.login()
 
             if isinstance(result, dict) and result.get("auth_token"):
@@ -227,11 +231,15 @@ class UserCommands:
         try:
             from quads_lib import QuadsApi
 
+            from quads_client.proxies import apply_proxy_to_session
+
             server_name = self.shell.connection.current_server
             url = self.shell.config.get_server_url(server_name)
             verify = self.shell.config.get_server_verify(server_name)
+            proxy = self.shell.config.get_server_proxy(server_name)
 
             api = QuadsApi(base_url=url, username="", password="", verify=verify, api_token=token)
+            apply_proxy_to_session(api, proxy)
 
             # Verify token works with a lightweight API call
             api.get_version()
